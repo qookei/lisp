@@ -22,6 +22,9 @@
 
 #include <expected>
 
+#include <format>
+#include <sstream>
+
 template <typename ...Ts>
 struct overloaded : Ts... {
 	using Ts::operator()...;
@@ -292,6 +295,22 @@ struct value : value_variant {
 };
 
 
+template <>
+struct std::formatter<value, char> {
+	template<class Ctx>
+	constexpr Ctx::iterator parse(Ctx &ctx) {
+		return ctx.begin();
+	}
+
+	template<class Ctx>
+	Ctx::iterator format(value val, Ctx& ctx) const {
+		std::ostringstream os;
+		os << val;
+
+		return std::ranges::copy(std::move(os).str(), ctx.out()).out;
+	}
+};
+
 valuep make_symbol(std::string sym) {
 	return std::make_shared<value>(symbol{std::move(sym)});
 }
@@ -397,7 +416,7 @@ struct environment : std::enable_shared_from_this<environment> {
 	std::unordered_map<std::string, valuep> values;
 	std::weak_ptr<environment> parent;
 
-	valuep lookup(std::string name) {
+	result<valuep> lookup(std::string name) {
 		auto in = shared_from_this();
 
 		while (in) {
@@ -408,32 +427,34 @@ struct environment : std::enable_shared_from_this<environment> {
 			in = in->parent.lock();
 		}
 
-		return nullptr;
+		return fail(error_kind::unbound_variable, name);
 	}
 };
 
 template <typename F>
-valuep map(valuep list, F &&func) {
+result<valuep> map(valuep list, F &&func) {
 	if (std::get_if<nil>(list.get())) {
 		return make_nil();
 	} else if (auto kons = std::get_if<cons>(list.get())) {
 		return make_cons(
-			func(kons->car), map(kons->cdr, std::forward<F>(func)));
+			TRY(func(kons->car)), TRY(map(kons->cdr, std::forward<F>(func))));
 	} else {
-		return nullptr;
+		return fail(error_kind::illegal_argument, std::format("in map: {} is not cons or nil", *list));
 	}
 
 }
 
-valuep eval(valuep expr, std::shared_ptr<environment> env) {
+result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 	if (std::get_if<number>(expr.get())) {
 		return expr;
 	} else if (auto sym = std::get_if<symbol>(expr.get())) {
 		return env->lookup(sym->value);
 	} else {
-		std::cout << "eval expr "<< *expr << "\n";
+		//std::cout << "eval expr "<< *expr << "\n";
 		auto kons = std::get_if<cons>(expr.get());
 		assert(kons);
+
+		// TODO: function-like builtins should be handled by the lambda case
 
 		// Special cases: special forms
 		if (auto sym = std::get_if<symbol>(kons->car.get())) {
@@ -464,7 +485,7 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 
 				assert(std::get_if<nil>(kons->cdr.get()));
 
-				auto conditionv = eval(condition, env);
+				auto conditionv = TRY(eval(condition, env));
 				if (auto val = std::get_if<number>(conditionv.get()); !val || val->value) {
 					return eval(yes, env);
 				} else {
@@ -473,11 +494,11 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			} else if (sym->value == "eq?") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto left = eval(kons->car, env);
+				auto left = TRY(eval(kons->car, env));
 
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto right = eval(kons->car, env);
+				auto right = TRY(eval(kons->car, env));
 
 				if (auto left_num = std::get_if<number>(left.get()),
 						right_num = std::get_if<number>(right.get());
@@ -493,11 +514,11 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			} else if (sym->value == "+") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto left = eval(kons->car, env);
+				auto left = TRY(eval(kons->car, env));
 
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto right = eval(kons->car, env);
+				auto right = TRY(eval(kons->car, env));
 
 				if (auto left_num = std::get_if<number>(left.get()),
 						right_num = std::get_if<number>(right.get());
@@ -509,11 +530,11 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			} else if (sym->value == "*") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto left = eval(kons->car, env);
+				auto left = TRY(eval(kons->car, env));
 
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto right = eval(kons->car, env);
+				auto right = TRY(eval(kons->car, env));
 
 				if (auto left_num = std::get_if<number>(left.get()),
 						right_num = std::get_if<number>(right.get());
@@ -533,7 +554,7 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 				if (auto sym = std::get_if<symbol>(first.get())) {
 					kons = std::get_if<cons>(kons->cdr.get());
 					assert(kons);
-					auto value = eval(kons->car, env);
+					auto value = TRY(eval(kons->car, env));
 
 					env->values[sym->value] = value;
 
@@ -560,7 +581,7 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			} else if (sym->value == "car") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto arg = eval(kons->car, env);
+				auto arg = TRY(eval(kons->car, env));
 
 				auto kons = std::get_if<cons>(arg.get());
 				assert(kons);
@@ -568,7 +589,7 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			} else if (sym->value == "cdr") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto arg = eval(kons->car, env);
+				auto arg = TRY(eval(kons->car, env));
 
 				auto kons = std::get_if<cons>(arg.get());
 				assert(kons);
@@ -576,17 +597,17 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			} else if (sym->value == "cons") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto car = eval(kons->car, env);
+				auto car = TRY(eval(kons->car, env));
 
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto cdr = eval(kons->car, env);
+				auto cdr = TRY(eval(kons->car, env));
 
 				return make_cons(car, cdr);
 			} else if (sym->value == "nil?") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
-				auto arg = eval(kons->car, env);
+				auto arg = TRY(eval(kons->car, env));
 
 				return make_number(!!std::get_if<nil>(arg.get()));
 			} else if (sym->value == "quote") {
@@ -598,18 +619,18 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
 
-				auto expr = eval(kons->car, env);
+				auto expr = TRY(eval(kons->car, env));
 				return eval(expr, env); // TODO: env?
 
 			}
 		}
 
 		// Not a special form
-		auto fn = eval(kons->car, env);
+		auto fn = TRY(eval(kons->car, env));
 
 		if (auto bltn = std::get_if<builtin>(fn.get())) {
 			auto params_cons = bltn->evaluate_params
-				? map(kons->cdr, [&] (valuep expr) { return eval(expr, env); })
+				? TRY(map(kons->cdr, [&] (valuep expr) { return eval(expr, env); }))
 				: kons->cdr;
 
 			std::vector<valuep> params;
@@ -626,8 +647,8 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			sub_env->parent = lmbd->captured_environment;
 
 			if (auto formals_sym = std::get_if<symbol>(lmbd->formals.formals.get())) {
-				sub_env->values[formals_sym->value] = map(kons->cdr,
-						[&] (valuep expr) { return eval(expr, env); });
+				sub_env->values[formals_sym->value] = TRY(
+					map(kons->cdr, [&] (valuep expr) { return eval(expr, env); }));
 
 				return eval(lmbd->body, sub_env);
 			}
@@ -642,12 +663,12 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 				assert(formal);
 				auto value = params_cons->car;
 
-				sub_env->values[formal->value] = eval(value, env);
+				sub_env->values[formal->value] = TRY(eval(value, env));
 
 				// Special case: formals are an improper list
 				if (auto last_formal = std::get_if<symbol>(formals_cons->cdr.get())) {
-					sub_env->values[last_formal->value] = map(params_cons->cdr,
-							[&] (valuep expr) { return eval(expr, env); });
+					sub_env->values[last_formal->value] = TRY(
+						map(params_cons->cdr, [&] (valuep expr) { return eval(expr, env); }));
 					break;
 				}
 
@@ -704,6 +725,6 @@ int main(int argc, char **argv) {
 
 		std::cout << "=> " << *expr << "\n";
 
-		std::cout << "<= " << *eval(expr, env) << "\n";
+		std::cout << "<= " << *MUST(eval(expr, env)) << "\n";
 	}
 }
