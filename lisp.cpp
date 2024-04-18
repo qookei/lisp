@@ -14,6 +14,7 @@
 #include <variant>
 #include <list>
 #include <unordered_map>
+#include <vector>
 
 #include <memory>
 
@@ -137,14 +138,29 @@ struct cons {
 	valuep cdr;
 };
 
-struct lambda {
+struct function_formals {
 	valuep formals;
+};
+
+struct lambda {
+	function_formals formals;
 	valuep body;
 
 	std::shared_ptr<environment> captured_environment;
 };
 
-using value_variant = std::variant<symbol, number, nil, cons, lambda>;
+struct builtin {
+	function_formals formals;
+
+	std::string name;
+
+	using fn_type = valuep (*)(std::vector<valuep> params, std::shared_ptr<environment> env);
+
+	bool evaluate_params;
+	fn_type tgt;
+};
+
+using value_variant = std::variant<symbol, number, nil, cons, lambda, builtin>;
 struct value : value_variant {
 	template <typename T>
 	value(T &&t)
@@ -176,7 +192,10 @@ struct value : value_variant {
 					}
 				},
 				[&] (const lambda &lmbd) {
-					os << "[lambda " << &v << " " << *lmbd.formals << " (env " << lmbd.captured_environment.get() << ")]";
+					os << "[lambda " << &v << " " << *lmbd.formals.formals << " (env " << lmbd.captured_environment.get() << ")]";
+				},
+				[&] (const builtin &bltn) {
+					os << "[builtin " << bltn.name << " " << *bltn.formals.formals << "]";
 				}
 			), v);
 		return os;
@@ -196,8 +215,16 @@ valuep make_cons(valuep car, valuep cdr) {
 	return std::make_shared<value>(cons{std::move(car), std::move(cdr)});
 }
 
-valuep make_lambda(valuep formals, valuep body, std::shared_ptr<environment> captured_environment) {
+valuep make_lambda(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
 	return std::make_shared<value>(lambda{std::move(formals), std::move(body), std::move(captured_environment)});
+}
+
+valuep make_functionlike_builtin(std::string name, builtin::fn_type tgt) {
+	return std::make_shared<value>(builtin{function_formals{}, std::move(name), true, tgt});
+}
+
+valuep make_macrolike_builtin(std::string name, builtin::fn_type tgt) {
+	return std::make_shared<value>(builtin{function_formals{}, std::move(name), false, tgt});
 }
 
 valuep make_nil() {
@@ -326,7 +353,7 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 
 				assert(std::get_if<nil>(kons->cdr.get()));
 
-				return make_lambda(formals, body, env);
+				return make_lambda(function_formals{formals}, body, env);
 			} else if (sym->value == "if") {
 				kons = std::get_if<cons>(kons->cdr.get());
 				assert(kons);
@@ -419,23 +446,17 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 
 					return value;
 				} else {
-					std::cout << "define first " << *first << "\n";
 					auto first_kons = std::get_if<cons>(first.get());
 					assert(first_kons);
 					auto name = std::get_if<symbol>(first_kons->car.get());
 					assert(name);
 					auto formals = first_kons->cdr;
 
-					std::cout << "define formals " << *formals << "\n";
-
-					std::cout << "define kons->cdr " << *kons->cdr << "\n";
 					kons = std::get_if<cons>(kons->cdr.get());
 					assert(kons);
 					auto body = kons->car;
 
-					std::cout << "define body " << *body << "\n";
-
-					auto value = make_lambda(formals, body, env);
+					auto value = make_lambda(function_formals{formals}, body, env);
 					env->values[name->value] = value;
 
 					assert(std::get_if<nil>(kons->cdr.get()));
@@ -491,18 +512,32 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 		// Not a special form
 		auto fn = eval(kons->car, env);
 
-		if (auto lmbd = std::get_if<lambda>(fn.get())) {
+		if (auto bltn = std::get_if<builtin>(fn.get())) {
+			auto params_cons = bltn->evaluate_params
+				? map(kons->cdr, [&] (valuep expr) { return eval(expr, env); })
+				: kons->cdr;
+
+			std::vector<valuep> params;
+
+			cons *kons = std::get_if<cons>(params_cons.get());
+			while (kons) {
+				params.push_back(kons->car);
+				kons = std::get_if<cons>(kons->cdr.get());
+			}
+
+			return bltn->tgt(params, env);
+		} else if (auto lmbd = std::get_if<lambda>(fn.get())) {
 			auto sub_env = std::make_shared<environment>();
 			sub_env->parent = lmbd->captured_environment;
 
-			if (auto formals_sym = std::get_if<symbol>(lmbd->formals.get())) {
+			if (auto formals_sym = std::get_if<symbol>(lmbd->formals.formals.get())) {
 				sub_env->values[formals_sym->value] = map(kons->cdr,
 						[&] (valuep expr) { return eval(expr, env); });
 
 				return eval(lmbd->body, sub_env);
 			}
 
-			auto formals_cons = std::get_if<cons>(lmbd->formals.get());
+			auto formals_cons = std::get_if<cons>(lmbd->formals.formals.get());
 			assert(formals_cons);
 			auto params_cons = std::get_if<cons>(kons->cdr.get());
 			assert(params_cons);
