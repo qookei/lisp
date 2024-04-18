@@ -114,7 +114,7 @@ std::ostream &operator<<(std::ostream &os, const token &tok) {
 }
 
 // ---------------------------------------------------------------------
-// Parsing
+// Values
 // ---------------------------------------------------------------------
 
 struct value;
@@ -203,6 +203,10 @@ valuep make_lambda(valuep formals, valuep body, std::shared_ptr<environment> cap
 valuep make_nil() {
 	return std::make_shared<value>(nil{});
 }
+
+// ---------------------------------------------------------------------
+// Parsing
+// ---------------------------------------------------------------------
 
 template <typename It>
 struct parser {
