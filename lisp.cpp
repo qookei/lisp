@@ -495,13 +495,24 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 			}
 
 			auto formals_cons = std::get_if<cons>(lmbd->formals.formals.get());
-			assert(formals_cons);
+			if (!formals_cons)
+				return fail(error_kind::unrecognized_form,
+						std::format("lambda formals should be a list or symbol, not {}",
+								*lmbd->formals.formals));
+
 			auto params_cons = std::get_if<cons>(kons->cdr.get());
-			assert(params_cons);
+			if (!params_cons)
+				return fail(error_kind::unrecognized_form,
+						std::format("lambda parameters should be a list, not {}",
+								*kons->cdr));
 
 			while (formals_cons && params_cons) {
 				auto formal = std::get_if<symbol>(formals_cons->car.get());
-				assert(formal);
+				if (!formal)
+					return fail(error_kind::unrecognized_form,
+						std::format("lambda formal should be a symbol, not {}",
+								*formals_cons->car));
+
 				auto value = params_cons->car;
 
 				sub_env->values[formal->value] = lmbd->is_macro ? value : TRY(eval(value, env));
@@ -519,17 +530,33 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 				}
 
 				// If this is the end of formals, make sure the argument list ends as well
-				if (std::get_if<nil>(formals_cons->cdr.get()))
-					assert(std::get_if<nil>(params_cons->cdr.get()));
+				if (std::get_if<nil>(formals_cons->cdr.get())
+						&& !std::get_if<nil>(params_cons->cdr.get()))
+					return fail(error_kind::unrecognized_form,
+						std::format("too many parameters, left over parameters are {}",
+								*params_cons->cdr));
 
 				// If this is the end of params, make sure the formals end as well
-				if (std::get_if<nil>(params_cons->cdr.get()))
-					assert(std::get_if<nil>(formals_cons->cdr.get()));
+				if (std::get_if<nil>(params_cons->cdr.get())
+						&& !std::get_if<nil>(formals_cons->cdr.get()))
+					return fail(error_kind::unrecognized_form,
+						std::format("not enough parameters, missing parameters for {}",
+								*formals_cons->cdr));
 
-				assert(std::get_if<cons>(formals_cons->cdr.get()) || std::get_if<nil>(formals_cons->cdr.get()));
+				if (!std::get_if<cons>(formals_cons->cdr.get()) &&
+						!std::get_if<nil>(formals_cons->cdr.get()))
+					return fail(error_kind::unrecognized_form,
+						std::format("lambda formals should be a list, not {}",
+								*formals_cons->cdr));
+
+
+				if (!std::get_if<cons>(params_cons->cdr.get()) &&
+						!std::get_if<nil>(params_cons->cdr.get()))
+					return fail(error_kind::unrecognized_form,
+						std::format("lambda parameters should be a list, not {}",
+								*params_cons->cdr));
+
 				formals_cons = std::get_if<cons>(formals_cons->cdr.get());
-
-				assert(std::get_if<cons>(params_cons->cdr.get()) || std::get_if<nil>(params_cons->cdr.get()));
 				params_cons = std::get_if<cons>(params_cons->cdr.get());
 			}
 
