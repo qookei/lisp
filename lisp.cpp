@@ -63,6 +63,9 @@ std::generator<token> tokenize(std::ifstream file) {
 
 		if (isspace(c)) {
 			continue;
+		} else if (c == ';') {
+			while (!file.eof() && file.get() != '\n')
+				;
 		} else if (c == '(') {
 			co_yield lparen{};
 		} else if (c == ')') {
