@@ -156,7 +156,7 @@ struct error {
 				os << "unbound variable: " << err.context;
 				break;
 			case illegal_argument:
-				os << "illegal_argument: " << err.context;
+				os << "illegal argument: " << err.context;
 				break;
 
 			default:
@@ -246,7 +246,7 @@ struct builtin {
 
 	std::string name;
 
-	using fn_type = valuep (*)(std::vector<valuep> params, std::shared_ptr<environment> env);
+	using fn_type = result<valuep> (*)(std::vector<valuep> params, std::shared_ptr<environment> env);
 
 	bool evaluate_params;
 	fn_type tgt;
@@ -441,7 +441,6 @@ result<valuep> map(valuep list, F &&func) {
 	} else {
 		return fail(error_kind::illegal_argument, std::format("in map: {} is not cons or nil", *list));
 	}
-
 }
 
 result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
@@ -450,182 +449,11 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 	} else if (auto sym = std::get_if<symbol>(expr.get())) {
 		return env->lookup(sym->value);
 	} else {
-		//std::cout << "eval expr "<< *expr << "\n";
 		auto kons = std::get_if<cons>(expr.get());
-		assert(kons);
+		if (!kons)
+			return fail(error_kind::unrecognized_form,
+					std::format("unrecognized form {}", *expr));
 
-		// TODO: function-like builtins should be handled by the lambda case
-
-		// Special cases: special forms
-		if (auto sym = std::get_if<symbol>(kons->car.get())) {
-			if (sym->value == "lambda" || sym->value == "λ") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto formals = kons->car;
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto body = kons->car;
-
-				assert(std::get_if<nil>(kons->cdr.get()));
-
-				return make_lambda(function_formals{formals}, body, env);
-			} else if (sym->value == "if") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto condition = kons->car;
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto yes = kons->car;
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto no = kons->car;
-
-				assert(std::get_if<nil>(kons->cdr.get()));
-
-				auto conditionv = TRY(eval(condition, env));
-				if (auto val = std::get_if<number>(conditionv.get()); !val || val->value) {
-					return eval(yes, env);
-				} else {
-					return eval(no, env);
-				}
-			} else if (sym->value == "eq?") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto left = TRY(eval(kons->car, env));
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto right = TRY(eval(kons->car, env));
-
-				if (auto left_num = std::get_if<number>(left.get()),
-						right_num = std::get_if<number>(right.get());
-						left_num && right_num && left_num->value == right_num->value) {
-					return make_number(1);
-				} else if (auto left_sym = std::get_if<symbol>(left.get()),
-						right_sym = std::get_if<symbol>(right.get());
-						left_sym && right_sym && left_sym->value == right_sym->value) {
-					return make_number(1);
-				} else {
-					return make_number(0);
-				}
-			} else if (sym->value == "+") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto left = TRY(eval(kons->car, env));
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto right = TRY(eval(kons->car, env));
-
-				if (auto left_num = std::get_if<number>(left.get()),
-						right_num = std::get_if<number>(right.get());
-						left_num && right_num) {
-					return make_number(left_num->value + right_num->value);
-				} else {
-					assert(!"addition of not-numbers");
-				}
-			} else if (sym->value == "*") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto left = TRY(eval(kons->car, env));
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto right = TRY(eval(kons->car, env));
-
-				if (auto left_num = std::get_if<number>(left.get()),
-						right_num = std::get_if<number>(right.get());
-						left_num && right_num) {
-					return make_number(left_num->value * right_num->value);
-				} else {
-					assert(!"multiplication of not-numbers");
-				}
-			} else if (sym->value == "define") {
-				// define has two forms: (define name value) and (define (name formals...) body)
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto first = kons->car;
-
-				// This is the former form
-				if (auto sym = std::get_if<symbol>(first.get())) {
-					kons = std::get_if<cons>(kons->cdr.get());
-					assert(kons);
-					auto value = TRY(eval(kons->car, env));
-
-					env->values[sym->value] = value;
-
-					assert(std::get_if<nil>(kons->cdr.get()));
-
-					return value;
-				} else {
-					auto first_kons = std::get_if<cons>(first.get());
-					assert(first_kons);
-					auto name = std::get_if<symbol>(first_kons->car.get());
-					assert(name);
-					auto formals = first_kons->cdr;
-
-					kons = std::get_if<cons>(kons->cdr.get());
-					assert(kons);
-					auto body = kons->car;
-
-					auto value = make_lambda(function_formals{formals}, body, env);
-					env->values[name->value] = value;
-
-					assert(std::get_if<nil>(kons->cdr.get()));
-					return value;
-				}
-			} else if (sym->value == "car") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto arg = TRY(eval(kons->car, env));
-
-				auto kons = std::get_if<cons>(arg.get());
-				assert(kons);
-				return kons->car;
-			} else if (sym->value == "cdr") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto arg = TRY(eval(kons->car, env));
-
-				auto kons = std::get_if<cons>(arg.get());
-				assert(kons);
-				return kons->cdr;
-			} else if (sym->value == "cons") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto car = TRY(eval(kons->car, env));
-
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto cdr = TRY(eval(kons->car, env));
-
-				return make_cons(car, cdr);
-			} else if (sym->value == "nil?") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-				auto arg = TRY(eval(kons->car, env));
-
-				return make_number(!!std::get_if<nil>(arg.get()));
-			} else if (sym->value == "quote") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-
-				return kons->car;
-			} else if (sym->value == "eval") {
-				kons = std::get_if<cons>(kons->cdr.get());
-				assert(kons);
-
-				auto expr = TRY(eval(kons->car, env));
-				return eval(expr, env); // TODO: env?
-
-			}
-		}
-
-		// Not a special form
 		auto fn = TRY(eval(kons->car, env));
 
 		if (auto bltn = std::get_if<builtin>(fn.get())) {
@@ -694,6 +522,191 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 	}
 }
 
+std::shared_ptr<environment> prepare_root_environment() {
+	auto root_env = std::make_shared<environment>();
+
+	auto functionlike = [&] (std::string name, builtin::fn_type tgt) {
+		root_env->values[name] = make_functionlike_builtin(name, tgt);
+	};
+
+	auto macrolike = [&] (std::string name, builtin::fn_type tgt) {
+		root_env->values[name] = make_macrolike_builtin(name, tgt);
+	};
+
+	functionlike(
+		"cons",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			if (params.size() != 2)
+				return fail(error_kind::unrecognized_form, "cons takes 2 parameters");
+
+			return make_cons(params[0], params[1]);
+		});
+
+	functionlike(
+		"car",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			if (params.size() != 1)
+				return fail(error_kind::unrecognized_form, "car takes 1 parameter");
+
+			auto kons = std::get_if<cons>(params[0].get());
+			if (!kons)
+				return fail(error_kind::illegal_argument,
+						std::format("car expects a cons, not {}", *params[0]));
+
+			return kons->car;
+		});
+
+	functionlike(
+		"cdr",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			if (params.size() != 1)
+				return fail(error_kind::unrecognized_form, "cdr takes 1 parameter");
+
+			auto kons = std::get_if<cons>(params[0].get());
+			if (!kons)
+				return fail(error_kind::illegal_argument,
+						std::format("cdr expects a cons, not {}", *params[0]));
+
+			return kons->cdr;
+		});
+
+	functionlike(
+		"nil?",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			if (params.size() != 1)
+				return fail(error_kind::unrecognized_form, "nil? takes 1 parameter");
+
+			return make_number(!!std::get_if<nil>(params[0].get()));
+		});
+
+	functionlike(
+		"eq?",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			if (params.size() != 2)
+				return fail(error_kind::unrecognized_form, "eq? takes 2 parameter");
+
+			if (auto left_num = std::get_if<number>(params[0].get()),
+					right_num = std::get_if<number>(params[1].get());
+					left_num && right_num && left_num->value == right_num->value) {
+				return make_number(1);
+			} else if (auto left_sym = std::get_if<symbol>(params[0].get()),
+					right_sym = std::get_if<symbol>(params[1].get());
+					left_sym && right_sym && left_sym->value == right_sym->value) {
+				return make_number(1);
+			} else {
+				return make_number(0);
+			}
+		});
+
+	functionlike(
+		"+",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			int result = 0;
+
+			for (auto param : params) {
+				auto num = std::get_if<number>(param.get());
+				if (!num)
+					return fail(error_kind::illegal_argument,
+							std::format("+ expects a number, not {}", *param));
+
+				result += num->value;
+			}
+
+			return make_number(result);
+		});
+
+	functionlike(
+		"*",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			int result = 1;
+
+			for (auto param : params) {
+				auto num = std::get_if<number>(param.get());
+				if (!num)
+					return fail(error_kind::illegal_argument,
+							std::format("* expects a number, not {}", *param));
+
+				result *= num->value;
+			}
+
+			return make_number(result);
+		});
+
+	functionlike(
+		"eval",
+		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
+			if (params.size() != 1)
+				return fail(error_kind::unrecognized_form, "eval takes 1 parameter");
+
+			return eval(params[0], env); // TODO: env argument?
+		});
+
+	macrolike(
+		"quote",
+		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
+			if (params.size() != 1)
+				return fail(error_kind::unrecognized_form, "quote takes 1 parameter");
+
+			return params[0];
+		});
+
+	macrolike(
+		"if",
+		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
+			if (params.size() != 3)
+				return fail(error_kind::unrecognized_form, "if takes 3 parameters");
+
+			auto condition = TRY(eval(params[0], env));
+
+			if (auto val = std::get_if<number>(condition.get()); !val || val->value) {
+				return eval(params[1], env);
+			} else {
+				return eval(params[2], env);
+			}
+		});
+
+	macrolike(
+		"lambda",
+		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
+			if (params.size() != 3)
+				return fail(error_kind::unrecognized_form, "lambda takes 3 parameters");
+
+			return make_lambda(function_formals{params[0]}, params[1], env);
+		});
+	root_env->values["λ"] = root_env->values["lambda"];
+
+	macrolike(
+		"define",
+		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
+			if (params.size() != 2)
+				return fail(error_kind::unrecognized_form, "define takes 2 parameters");
+
+			if (auto name = std::get_if<symbol>(params[0].get())) {
+				// (define name value)
+
+				auto value = TRY(eval(params[1], env));
+				env->values[name->value] = value;
+				return value;
+			} else if (auto name_and_formals = std::get_if<cons>(params[0].get())) {
+				// (define (name formals...) body)
+
+				auto name = std::get_if<symbol>(name_and_formals->car.get());
+				auto formals = name_and_formals->cdr;
+				if (!name)
+					return fail(error_kind::illegal_argument,
+							std::format("define expects a symbol for name, not {}", *name_and_formals->car));
+
+				auto value = make_lambda(function_formals{formals}, params[1], env);
+				env->values[name->value] = value;
+				return value;
+			}
+			return fail(error_kind::illegal_argument,
+					std::format("define expects either a cons for name and formals, or a symbol for name, not {}", *params[0]));
+		});
+
+	return root_env;
+}
+
 // ---------------------------------------------------------------------
 // Misc
 // ---------------------------------------------------------------------
@@ -710,7 +723,9 @@ int main(int argc, char **argv) {
 		return 2;
 	}
 
+	auto root_env = prepare_root_environment();
 	auto env = std::make_shared<environment>();
+	env->parent = root_env;
 
 	auto tokens = tokenize(std::move(file));
 
