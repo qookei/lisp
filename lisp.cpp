@@ -495,7 +495,13 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 			auto sub_env = std::make_shared<environment>();
 			sub_env->parent = lmbd->captured_environment;
 
-			// TODO: handle formals being a name instead of a list of names: (lambda foo ...)
+			if (auto formals_sym = std::get_if<symbol>(lmbd->formals.get())) {
+				sub_env->values[formals_sym->value] = map(kons->cdr,
+						[&] (valuep expr) { return eval(expr, env); });
+
+				return eval(lmbd->body, sub_env);
+			}
+
 			auto formals_cons = std::get_if<cons>(lmbd->formals.get());
 			assert(formals_cons);
 			auto params_cons = std::get_if<cons>(kons->cdr.get());
