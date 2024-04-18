@@ -1,18 +1,24 @@
-(1 . 2) 3
+(define (list . values)
+    values)
 
-(define my-number 7)
+(define (map fn lst)
+    (if (nil? lst)
+	'()
+	(cons (fn (car lst))
+	      (map fn (cdr lst)))))
 
-(define (list kar . rest)
-    (cons kar rest))
+(define (cadr v)
+    (car (cdr v)))
 
-(define (faux-macro a)
-    (list a 10 20))
+(define-macro (let bindings body)
+    (cons
+     ;; Lambda to introduce bindings
+     (list 'lambda
+	   (map car bindings)
+	   body)
+     ;; Parameter list for lambda
+     (map cadr bindings)))
 
-(define (fact n)
-    (if (eq? n 0)
-	1
-	(* n (fact (+ n -1)))))
-
-(fact my-number)
-
-(eval (faux-macro '+))
+(let ((a 1)
+      (b 2))
+  (+ a b))

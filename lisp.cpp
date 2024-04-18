@@ -238,6 +238,8 @@ struct lambda {
 	function_formals formals;
 	valuep body;
 
+	bool is_macro;
+
 	std::shared_ptr<environment> captured_environment;
 };
 
@@ -284,7 +286,8 @@ struct value : value_variant {
 					}
 				},
 				[&] (const lambda &lmbd) {
-					os << "[lambda " << &v << " " << *lmbd.formals.formals << " (env " << lmbd.captured_environment.get() << ")]";
+					os << (lmbd.is_macro ? "[macro " : "[lambda ")
+						<< &v << " " << *lmbd.formals.formals << " (env " << lmbd.captured_environment.get() << ")]";
 				},
 				[&] (const builtin &bltn) {
 					os << "[builtin " << bltn.name << " " << *bltn.formals.formals << "]";
@@ -324,7 +327,11 @@ valuep make_cons(valuep car, valuep cdr) {
 }
 
 valuep make_lambda(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
-	return std::make_shared<value>(lambda{std::move(formals), std::move(body), std::move(captured_environment)});
+	return std::make_shared<value>(lambda{std::move(formals), std::move(body), false, std::move(captured_environment)});
+}
+
+valuep make_macro(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
+	return std::make_shared<value>(lambda{std::move(formals), std::move(body), true, std::move(captured_environment)});
 }
 
 valuep make_functionlike_builtin(std::string name, builtin::fn_type tgt) {
@@ -475,6 +482,12 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 			sub_env->parent = lmbd->captured_environment;
 
 			if (auto formals_sym = std::get_if<symbol>(lmbd->formals.formals.get())) {
+				if (lmbd->is_macro) {
+					sub_env->values[formals_sym->value] = kons->cdr;
+					auto out_expr = TRY(eval(lmbd->body, sub_env));
+					return eval(out_expr, env);
+				}
+
 				sub_env->values[formals_sym->value] = TRY(
 					map(kons->cdr, [&] (valuep expr) { return eval(expr, env); }));
 
@@ -491,10 +504,15 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 				assert(formal);
 				auto value = params_cons->car;
 
-				sub_env->values[formal->value] = TRY(eval(value, env));
+				sub_env->values[formal->value] = lmbd->is_macro ? value : TRY(eval(value, env));
 
 				// Special case: formals are an improper list
 				if (auto last_formal = std::get_if<symbol>(formals_cons->cdr.get())) {
+					if (lmbd->is_macro) {
+						sub_env->values[last_formal->value] = params_cons->cdr;
+						break;
+					}
+
 					sub_env->values[last_formal->value] = TRY(
 						map(params_cons->cdr, [&] (valuep expr) { return eval(expr, env); }));
 					break;
@@ -513,6 +531,11 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 
 				assert(std::get_if<cons>(params_cons->cdr.get()) || std::get_if<nil>(params_cons->cdr.get()));
 				params_cons = std::get_if<cons>(params_cons->cdr.get());
+			}
+
+			if (lmbd->is_macro) {
+				auto out_expr = TRY(eval(lmbd->body, sub_env));
+				return eval(out_expr, env);
 			}
 
 			return eval(lmbd->body, sub_env);
@@ -668,8 +691,8 @@ std::shared_ptr<environment> prepare_root_environment() {
 	macrolike(
 		"lambda",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (params.size() != 3)
-				return fail(error_kind::unrecognized_form, "lambda takes 3 parameters");
+			if (params.size() != 2)
+				return fail(error_kind::unrecognized_form, "lambda takes 2 parameters");
 
 			return make_lambda(function_formals{params[0]}, params[1], env);
 		});
@@ -702,6 +725,29 @@ std::shared_ptr<environment> prepare_root_environment() {
 			}
 			return fail(error_kind::illegal_argument,
 					std::format("define expects either a cons for name and formals, or a symbol for name, not {}", *params[0]));
+		});
+
+	macrolike(
+		"define-macro",
+		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
+			if (params.size() != 2)
+				return fail(error_kind::unrecognized_form, "define-macro takes 2 parameters");
+
+			if (auto name_and_formals = std::get_if<cons>(params[0].get())) {
+				// (define-macro (name formals...) body)
+
+				auto name = std::get_if<symbol>(name_and_formals->car.get());
+				auto formals = name_and_formals->cdr;
+				if (!name)
+					return fail(error_kind::illegal_argument,
+							std::format("define-macro expects a symbol for name, not {}", *name_and_formals->car));
+
+				auto value = make_macro(function_formals{formals}, params[1], env);
+				env->values[name->value] = value;
+				return value;
+			}
+			return fail(error_kind::illegal_argument,
+					std::format("define-macro expects a cons for name and formals, not {}", *params[0]));
 		});
 
 	return root_env;
