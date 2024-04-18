@@ -324,9 +324,10 @@ valuep make_nil() {
 // Parsing
 // ---------------------------------------------------------------------
 
+// TODO: end-of-file in the middle of an expression should be transformed into syntax_error
 template <typename It>
 struct parser {
-	valuep operator()(raw_symbol sym) {
+	result<valuep> operator()(raw_symbol sym) {
 		if ((sym.value[0] == '-' && sym.value.size() > 1 && std::ranges::all_of(sym.value.substr(1), ::isdigit))
 				|| std::ranges::all_of(sym.value, ::isdigit))
 			return std::make_shared<value>(number{std::stoi(sym.value)});
@@ -334,13 +335,13 @@ struct parser {
 		return std::make_shared<value>(symbol{std::move(sym.value)});
 	}
 
-	valuep operator()(quote) {
+	result<valuep> operator()(quote) {
 		return make_cons(
 			make_symbol("quote"),
-			make_cons(parse_expr(), make_nil()));
+			make_cons(TRY(parse_expr()), make_nil()));
 	}
 
-	valuep operator()(lparen) {
+	result<valuep> operator()(lparen) {
 		auto token = *it;
 		++it;
 
@@ -350,36 +351,41 @@ struct parser {
 
 		// Is this . x)? (a continuation of a cons or improper list)
 		if (std::get_if<dot>(&token)) {
-			auto cdr = parse_expr();
+			auto cdr = TRY(parse_expr());
 
 			auto tok_rparen = *it;
 			++it;
 
 			if (!std::get_if<rparen>(&tok_rparen))
-				return nullptr;
+				return fail(error_kind::syntax_error);
 			return cdr;
 		}
 
-		auto car = std::visit(*this, token);
+		auto car = TRY(std::visit(*this, token));
 
 		// Recurse to parse the remainder of the list
-		return make_cons(std::move(car), (*this)(lparen{}));
+		return make_cons(std::move(car), TRY((*this)(lparen{})));
 	}
 
 	// Invalid token at this point
-	valuep operator()(auto) { return nullptr; }
+	result<valuep> operator()(auto) {
+		return fail(error_kind::syntax_error);
+	}
 
-	valuep parse_expr() {
+	result<valuep> operator()(eof) {
+		return fail(error_kind::end_of_file);
+	}
+
+	result<valuep> parse_expr() {
 		auto token = *it;
 		++it;
-		std::cout << "parse expr " << token << "\n";
 		return std::visit(*this, token);
 	}
 
 	It &it;
 };
 
-valuep parse_expr(auto &it) {
+result<valuep> parse_expr(auto &it) {
 	return parser{it}.parse_expr();
 }
 
@@ -690,9 +696,11 @@ int main(int argc, char **argv) {
 	auto it = tokens.begin();
 
 	while (true) {
-		auto expr = parse_expr(it);
-		if (!expr)
+		auto maybe_expr = parse_expr(it);
+		if (!maybe_expr && maybe_expr.error().kind == error_kind::end_of_file)
 			break;
+
+		auto expr = MUST(maybe_expr);
 
 		std::cout << "=> " << *expr << "\n";
 
