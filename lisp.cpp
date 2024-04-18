@@ -290,6 +290,19 @@ struct environment : std::enable_shared_from_this<environment> {
 	}
 };
 
+template <typename F>
+valuep map(valuep list, F &&func) {
+	if (std::get_if<nil>(list.get())) {
+		return make_nil();
+	} else if (auto kons = std::get_if<cons>(list.get())) {
+		return make_cons(
+			func(kons->car), map(kons->cdr, std::forward<F>(func)));
+	} else {
+		return nullptr;
+	}
+
+}
+
 valuep eval(valuep expr, std::shared_ptr<environment> env) {
 	if (std::get_if<number>(expr.get())) {
 		return expr;
@@ -497,7 +510,8 @@ valuep eval(valuep expr, std::shared_ptr<environment> env) {
 
 				// Special case: formals are an improper list
 				if (auto last_formal = std::get_if<symbol>(formals_cons->cdr.get())) {
-					sub_env->values[last_formal->value] = params_cons->cdr;
+					sub_env->values[last_formal->value] = map(params_cons->cdr,
+							[&] (valuep expr) { return eval(expr, env); });
 					break;
 				}
 
