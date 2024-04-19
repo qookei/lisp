@@ -46,6 +46,9 @@ struct rparen { };
 
 struct dot { };
 struct quote { };
+struct quasiquote { };
+struct unquote { };
+struct unquote_splicing { };
 
 struct eof { };
 
@@ -55,9 +58,13 @@ using token = std::variant<
 	rparen,
 	dot,
 	quote,
+	quasiquote,
+	unquote,
+	unquote_splicing,
 	eof>;
 
-inline constexpr std::string_view SPECIAL_CHARACTERS = "()'";
+// TODO: quotes can appear inside of symbols
+inline constexpr std::string_view SPECIAL_CHARACTERS = "()'`,";
 
 std::generator<token> tokenize(std::ifstream file) {
 	auto valid_symbol_chr = [] (char c) {
@@ -78,6 +85,15 @@ std::generator<token> tokenize(std::ifstream file) {
 			co_yield rparen{};
 		} else if (c == '\'') {
 			co_yield quote{};
+		} else if (c == '`') {
+			co_yield quasiquote{};
+		} else if (c == ',') {
+			if (file.peek() == '@') {
+				file.get();
+				co_yield unquote_splicing{};
+			} else {
+				co_yield unquote{};
+			}
 		} else {
 			std::string v{};
 
@@ -113,6 +129,9 @@ std::ostream &operator<<(std::ostream &os, const token &tok) {
 			[&] (lparen) { os << "("; },
 			[&] (rparen) { os << ")"; },
 			[&] (quote) { os << "'"; },
+			[&] (quasiquote) { os << "`"; },
+			[&] (unquote) { os << ","; },
+			[&] (unquote_splicing) { os << ",@"; },
 			[&] (dot) { os << "."; },
 			[&] (eof) { os << "[eof]"; }
 		), tok);
@@ -367,6 +386,24 @@ struct parser {
 			make_cons(TRY(parse_expr()), make_nil()));
 	}
 
+	result<valuep> operator()(quasiquote) {
+		return make_cons(
+			make_symbol("quasiquote"),
+			make_cons(TRY(parse_expr()), make_nil()));
+	}
+
+	result<valuep> operator()(unquote) {
+		return make_cons(
+			make_symbol("unquote"),
+			make_cons(TRY(parse_expr()), make_nil()));
+	}
+
+	result<valuep> operator()(unquote_splicing) {
+		return make_cons(
+			make_symbol("unquote-splicing"),
+			make_cons(TRY(parse_expr()), make_nil()));
+	}
+
 	result<valuep> operator()(lparen) {
 		auto token = *it;
 		++it;
@@ -572,6 +609,114 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 	}
 }
 
+result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env);
+
+std::tuple<valuep, bool> unpack_unquote(cons *kons) {
+	if (auto sym = std::get_if<symbol>(kons->car.get());
+			sym && (sym->value == "unquote"
+					|| sym->value == "unquote-splicing")) {
+		if (auto unquoted_cons = std::get_if<cons>(kons->cdr.get());
+				unquoted_cons && std::get_if<nil>(unquoted_cons->cdr.get())) {
+			return std::make_tuple(unquoted_cons->car,
+					sym->value == "unquote-splicing");
+		}
+	}
+
+	return std::make_tuple(nullptr, false);
+}
+
+result<std::tuple<valuep, bool>>
+quasi_eval_unquote(valuep expr, std::shared_ptr<environment> env) {
+	if (auto kons = std::get_if<cons>(expr.get())) {
+		if (auto [unquoted, splice] = unpack_unquote(kons); unquoted) {
+			return std::make_tuple(
+				TRY(eval(unquoted, env)),
+				splice);
+		}
+
+		return std::make_tuple(TRY(quasi_unquote(expr, env)), false);
+	}
+
+	return std::make_tuple(expr, false);
+}
+
+result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
+	if (auto kons = std::get_if<cons>(expr.get())) {
+		if (auto [unquoted, splice] = unpack_unquote(kons); unquoted) {
+			if (!splice) {
+				return eval(unquoted, env);
+			} else {
+				// Nothing to splice into at this point, return as-is.
+				return expr;
+			}
+		}
+
+		auto out = make_cons(make_nil(), make_nil());
+
+		auto in_cur = kons;
+		auto out_cur = std::get_if<cons>(out.get());
+
+		while (in_cur) {
+			auto [expr, splice] = TRY(quasi_eval_unquote(in_cur->car, env));
+
+			if (splice) {
+				auto new_cons = std::get_if<cons>(expr.get());
+				// !new_cons happens for e.g. `(,@1) => 1
+				if (!new_cons) {
+					auto out_cons = std::get_if<cons>(out.get());
+					assert(out_cons);
+
+					// Make sure out was empty
+					if (!std::get_if<nil>(out_cons->car.get())
+							|| !std::get_if<nil>(out_cons->cdr.get()))
+						return fail(error_kind::illegal_argument,
+								std::format("unquote-splicing of a non-cons replaces the outer list, but it's not empty: {}",
+										*out));
+
+					// And just replace the whole list with the unquoted expr
+					return expr;
+				}
+
+				*out_cur = *new_cons;
+
+				// Advance out_cur s.t. out_cur->cdr is not a cons
+				while (std::get_if<cons>(out_cur->cdr.get()))
+					out_cur = std::get_if<cons>(out_cur->cdr.get());
+			} else {
+				out_cur->car = expr;
+			}
+
+			auto next_in_cons = std::get_if<cons>(in_cur->cdr.get());
+
+			if (!next_in_cons) { // improper list
+				if (!std::get_if<nil>(in_cur->cdr.get())) {
+					out_cur->cdr = TRY(quasi_unquote(in_cur->car, env));
+				}
+			} else {
+				// Make sure the output cdr is nil (if we've unspliced an
+				// improper list, it could be something else)
+
+				if (!std::get_if<nil>(out_cur->cdr.get()))
+					return fail(error_kind::illegal_argument,
+							std::format("unquote-splicing produced an improper list, but we're not done with quasiquote! (cdr output) => {}, (cdr input) => {}",
+									*out_cur->cdr,
+									*in_cur->cdr));
+
+				// Add a new empty cons in the output and advance to it
+				out_cur->cdr = make_cons(make_nil(), make_nil());
+				out_cur = std::get_if<cons>(out_cur->cdr.get());
+			}
+
+			in_cur = next_in_cons;
+		}
+
+		return out;
+	}
+
+	// Nothing special, move along
+	return expr;
+}
+
 std::shared_ptr<environment> prepare_root_environment() {
 	auto root_env = std::make_shared<environment>();
 
@@ -698,6 +843,15 @@ std::shared_ptr<environment> prepare_root_environment() {
 				return fail(error_kind::unrecognized_form, "quote takes 1 parameter");
 
 			return params[0];
+		});
+
+	macrolike(
+		"quasiquote",
+		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
+			if (params.size() != 1)
+				return fail(error_kind::unrecognized_form, "quasiquote takes 1 parameter");
+
+			return quasi_unquote(params[0], env);
 		});
 
 	macrolike(
