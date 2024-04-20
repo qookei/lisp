@@ -550,16 +550,24 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 			}
 
 			auto formals_cons = std::get_if<cons>(lmbd->formals.formals.get());
-			if (!formals_cons)
+			if (!formals_cons && !std::get_if<nil>(lmbd->formals.formals.get()))
 				return fail(error_kind::unrecognized_form,
 						std::format("lambda formals should be a list or symbol, not {}",
 								*lmbd->formals.formals));
 
 			auto params_cons = std::get_if<cons>(kons->cdr.get());
-			if (!params_cons)
+			if (!params_cons && !std::get_if<nil>(kons->cdr.get()))
 				return fail(error_kind::unrecognized_form,
 						std::format("lambda parameters should be a list, not {}",
 								*kons->cdr));
+
+			if (!params_cons && formals_cons)
+				return fail(error_kind::illegal_argument,
+						std::format("lambda takes parameters but none were given"));
+
+			if (params_cons && !formals_cons)
+				return fail(error_kind::illegal_argument,
+						std::format("lambda given parameters but takes none"));
 
 			while (formals_cons && params_cons) {
 				auto formal = std::get_if<symbol>(formals_cons->car.get());
