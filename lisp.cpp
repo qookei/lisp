@@ -691,6 +691,13 @@ result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
 								std::format("unquote-splicing of a non-cons replaces the outer list, but it's not empty: {}",
 										*out));
 
+					// Make sure in_cur->cdr is nil (since we're discarding the rest of the input)
+					if (!std::get_if<nil>(in_cur->cdr.get()))
+						return fail(error_kind::illegal_argument,
+								std::format("unquote-splicing of a non-cons replaces the outer list, but the input list has trailing elements: {}",
+										*in_cur->cdr));
+
+
 					// And just replace the whole list with the unquoted expr
 					return expr;
 				}
