@@ -474,9 +474,12 @@ result<valuep> parse_expr(auto &it) {
 // Evaluation
 // ---------------------------------------------------------------------
 
+// TODO: I think this implementation of environment lets you leak memory due to the
+// interaction between lambdas and environments, by forming reference cycles.
+
 struct environment : std::enable_shared_from_this<environment> {
 	std::unordered_map<std::string, valuep> values;
-	std::weak_ptr<environment> parent;
+	std::shared_ptr<environment> parent;
 
 	result<valuep> lookup(std::string name) {
 		auto in = shared_from_this();
@@ -486,7 +489,7 @@ struct environment : std::enable_shared_from_this<environment> {
 			if (it != in->values.end())
 				return it->second;
 
-			in = in->parent.lock();
+			in = in->parent;
 		}
 
 		return fail(error_kind::unbound_variable, name);
