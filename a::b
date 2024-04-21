@@ -1,0 +1,77 @@
+(define (list . values)
+    values)
+
+(define (map fn lst)
+    (if (nil? lst)
+	'()
+	(cons (fn (car lst))
+	      (map fn (cdr lst)))))
+
+(define (cadr v)
+    (car (cdr v)))
+
+(define (cadar v)
+    (car (cdr (car v))))
+
+(define (caar v)
+    (car (car v)))
+
+(define (cddr v)
+    (cdr (cdr v)))
+
+(define-macro (let bindings body)
+    (cons
+     ;; Lambda to introduce bindings
+     (list 'lambda
+	   (map car bindings)
+	   body)
+     ;; Parameter list for lambda
+     (map cadr bindings)))
+
+;; TODO: eq? should support lists
+(define (list-equal? a b)
+    (cond
+      ((nil? a) (nil? b))
+      ((nil? b) 0)
+      ((eq? (car a) (car b))
+       (list-equal? (cdr a) (cdr b)))))
+
+(define (transform-cond-cases cases)
+    (if (nil? cases)
+	0
+	(if (eq? 'else (caar cases))
+	    (cadar cases)
+	    `(if ,(caar cases)
+		 ,(cadar cases)
+		 ,(transform-cond-cases (cdr cases))))))
+
+(define-macro (cond . cases)
+    (transform-cond-cases cases))
+
+(define (a::b-step lst)
+    (cond
+      ((nil? lst) '())
+      ((nil? (cdr lst)) lst)
+      ((* (eq? (car lst)  'A#)
+	  (eq? (cadr lst) '#A))
+       (a::b-step (cddr lst)))
+      ((* (eq? (car lst)  'B#)
+	  (eq? (cadr lst) '#B))
+       (a::b-step (cddr lst)))
+      ((* (eq? (car lst)  'A#)
+	  (eq? (cadr lst) '#B))
+       (cons '#B (cons 'A# (a::b-step (cddr lst)))))
+      ((* (eq? (car lst)  'B#)
+	  (eq? (cadr lst) '#A))
+       (cons '#A (cons 'B# (a::b-step (cddr lst)))))
+      (else
+       (cons (car lst) (a::b-step (cdr lst))))))
+
+(define (a::b lst)
+    (let ((out (a::b-step lst)))
+      (if (list-equal? lst out)
+	  out
+	  (a::b out))))
+
+(a::b '(B# A# #B #A B#))
+(a::b '(A# B# B# #A B# #A #B))
