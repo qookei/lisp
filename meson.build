@@ -4,7 +4,9 @@ project('lisp', 'cpp',
 	default_options : ['warning_level=2',
 			   'cpp_std=gnu++23'])
 
-exe = executable('lisp', 'lisp.cpp',
+exe = executable('lisp',
+		 'lisp.cpp',
+		 'token.cpp',
 		 install : true)
 
 test('basic', exe)

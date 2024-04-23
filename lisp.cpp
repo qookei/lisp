@@ -43,118 +43,8 @@
 #include <format>
 #include <sstream>
 
-template <typename ...Ts>
-struct overloaded : Ts... {
-	using Ts::operator()...;
-
-	overloaded(Ts &&...ts)
-	: Ts{std::forward<Ts>(ts)}... { };
-};
-
-struct raw_symbol {
-	std::string value;
-};
-
-// ---------------------------------------------------------------------
-// Tokenization
-// ---------------------------------------------------------------------
-
-struct lparen { };
-struct rparen { };
-
-struct dot { };
-struct quote { };
-struct quasiquote { };
-struct unquote { };
-struct unquote_splicing { };
-
-struct eof { };
-
-using token = std::variant<
-	raw_symbol,
-	lparen,
-	rparen,
-	dot,
-	quote,
-	quasiquote,
-	unquote,
-	unquote_splicing,
-	eof>;
-
-// TODO: quotes can appear inside of symbols
-inline constexpr std::string_view SPECIAL_CHARACTERS = "()'`,";
-
-std::generator<token> tokenize(std::ifstream file) {
-	auto valid_symbol_chr = [] (char c) {
-		return !SPECIAL_CHARACTERS.contains(c) && !isspace(c);
-	};
-
-	while (!file.eof()) {
-		char c = file.get();
-
-		if (isspace(c)) {
-			continue;
-		} else if (c == ';') {
-			while (!file.eof() && file.get() != '\n')
-				;
-		} else if (c == '(') {
-			co_yield lparen{};
-		} else if (c == ')') {
-			co_yield rparen{};
-		} else if (c == '\'') {
-			co_yield quote{};
-		} else if (c == '`') {
-			co_yield quasiquote{};
-		} else if (c == ',') {
-			if (file.peek() == '@') {
-				file.get();
-				co_yield unquote_splicing{};
-			} else {
-				co_yield unquote{};
-			}
-		} else {
-			std::string v{};
-
-			assert(valid_symbol_chr(c));
-
-			while (valid_symbol_chr(c) && !file.eof()) {
-				v.push_back(c);
-				c = file.get();
-			}
-
-			// Return the last character since it's not a
-			// part of the symbol
-			if (!file.eof() && !valid_symbol_chr(c)) {
-				file.unget();
-			}
-
-			// Special case: cons dot
-			if (v == ".") {
-				co_yield dot{};
-			} else if (v.size() != 0) {
-				co_yield raw_symbol{std::move(v)};
-			}
-		}
-	}
-
-	co_yield eof{};
-}
-
-std::ostream &operator<<(std::ostream &os, const token &tok) {
-	std::visit(
-		overloaded(
-			[&] (const raw_symbol &sym) { os << "[sym " << sym.value << "]"; },
-			[&] (lparen) { os << "("; },
-			[&] (rparen) { os << ")"; },
-			[&] (quote) { os << "'"; },
-			[&] (quasiquote) { os << "`"; },
-			[&] (unquote) { os << ","; },
-			[&] (unquote_splicing) { os << ",@"; },
-			[&] (dot) { os << "."; },
-			[&] (eof) { os << "[eof]"; }
-		), tok);
-	return os;
-}
+#include "token.hpp"
+#include "util.hpp"
 
 // ---------------------------------------------------------------------
 // Errors
@@ -990,7 +880,7 @@ int main(int argc, char **argv) {
 	auto env = std::make_shared<environment>();
 	env->parent = root_env;
 
-	auto tokens = tokenize(std::move(file));
+	auto tokens = tokenize(file);
 
 	auto it = tokens.begin();
 
