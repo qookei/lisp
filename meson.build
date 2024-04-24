@@ -5,10 +5,10 @@ project('lisp', 'cpp',
 			   'cpp_std=gnu++23'])
 
 exe = executable('lisp',
-		 'lisp.cpp',
-		 'token.cpp',
-		 'parse.cpp',
-		 'eval.cpp',
+		 'src/main.cpp',
+		 'src/token.cpp',
+		 'src/parse.cpp',
+		 'src/eval.cpp',
 		 install : true)
 
 test('basic', exe)
