@@ -16,44 +16,16 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include <generator>
-
-#include <optional>
-#include <utility>
-
-#include <iostream>
-#include <fstream>
-
-#include <cctype>
-#include <cassert>
-
-#include <string_view>
-
-#include <variant>
-#include <list>
-#include <unordered_map>
-#include <vector>
-
-#include <memory>
-
-#include <algorithm>
-
-#include <expected>
-
-#include <format>
-#include <sstream>
 
 #include "result.hpp"
 #include "parse.hpp"
 #include "token.hpp"
-#include "value.hpp"
 #include "eval.hpp"
-#include "util.hpp"
 
+#include <iostream>
+#include <fstream>
+#include <memory>
 
-// ---------------------------------------------------------------------
-// Misc
-// ---------------------------------------------------------------------
 
 int main(int argc, char **argv) {
 	if(argc != 2) {
