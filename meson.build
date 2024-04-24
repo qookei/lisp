@@ -7,6 +7,7 @@ project('lisp', 'cpp',
 exe = executable('lisp',
 		 'lisp.cpp',
 		 'token.cpp',
+		 'parse.cpp',
 		 install : true)
 
 test('basic', exe)

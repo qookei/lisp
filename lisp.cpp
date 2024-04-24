@@ -44,96 +44,11 @@
 #include <sstream>
 
 #include "result.hpp"
+#include "parse.hpp"
 #include "token.hpp"
 #include "value.hpp"
 #include "util.hpp"
 
-// ---------------------------------------------------------------------
-// Parsing
-// ---------------------------------------------------------------------
-
-// TODO: end-of-file in the middle of an expression should be transformed into syntax_error
-template <typename It>
-struct parser {
-	result<valuep> operator()(raw_symbol sym) {
-		if ((sym.value[0] == '-' && sym.value.size() > 1 && std::ranges::all_of(sym.value.substr(1), ::isdigit))
-				|| std::ranges::all_of(sym.value, ::isdigit))
-			return std::make_shared<value>(number{std::stoi(sym.value)});
-
-		return std::make_shared<value>(symbol{std::move(sym.value)});
-	}
-
-	result<valuep> operator()(quote) {
-		return make_cons(
-			make_symbol("quote"),
-			make_cons(TRY(parse_expr()), make_nil()));
-	}
-
-	result<valuep> operator()(quasiquote) {
-		return make_cons(
-			make_symbol("quasiquote"),
-			make_cons(TRY(parse_expr()), make_nil()));
-	}
-
-	result<valuep> operator()(unquote) {
-		return make_cons(
-			make_symbol("unquote"),
-			make_cons(TRY(parse_expr()), make_nil()));
-	}
-
-	result<valuep> operator()(unquote_splicing) {
-		return make_cons(
-			make_symbol("unquote-splicing"),
-			make_cons(TRY(parse_expr()), make_nil()));
-	}
-
-	result<valuep> operator()(lparen) {
-		auto token = *it;
-		++it;
-
-		// Is this closing a list?
-		if (std::get_if<rparen>(&token))
-			return make_nil();
-
-		// Is this . x)? (a continuation of a cons or improper list)
-		if (std::get_if<dot>(&token)) {
-			auto cdr = TRY(parse_expr());
-
-			auto tok_rparen = *it;
-			++it;
-
-			if (!std::get_if<rparen>(&tok_rparen))
-				return fail(error_kind::syntax_error);
-			return cdr;
-		}
-
-		auto car = TRY(std::visit(*this, token));
-
-		// Recurse to parse the remainder of the list
-		return make_cons(std::move(car), TRY((*this)(lparen{})));
-	}
-
-	// Invalid token at this point
-	result<valuep> operator()(auto) {
-		return fail(error_kind::syntax_error);
-	}
-
-	result<valuep> operator()(eof) {
-		return fail(error_kind::end_of_file);
-	}
-
-	result<valuep> parse_expr() {
-		auto token = *it;
-		++it;
-		return std::visit(*this, token);
-	}
-
-	It &it;
-};
-
-result<valuep> parse_expr(auto &it) {
-	return parser{it}.parse_expr();
-}
 
 // ---------------------------------------------------------------------
 // Evaluation
