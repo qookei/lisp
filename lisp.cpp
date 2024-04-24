@@ -43,95 +43,9 @@
 #include <format>
 #include <sstream>
 
+#include "result.hpp"
 #include "token.hpp"
 #include "util.hpp"
-
-// ---------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------
-
-enum class error_kind {
-	syntax_error,
-	end_of_file,
-	unrecognized_form,
-	unbound_variable,
-	illegal_argument,
-};
-
-struct error {
-	error_kind kind;
-
-	// TODO: maybe this ought to be a valuep or array thereof?
-	// although token would also be useful here (especially if it
-	// carried location information)
-	std::string context = "";
-
-	friend std::ostream &operator<<(std::ostream &os, const error &err) {
-		switch (err.kind) {
-			using enum error_kind;
-
-			case syntax_error:
-				os << "syntax error";
-				break;
-			case end_of_file:
-				os << "end of file";
-				break;
-			case unrecognized_form:
-				os << "unrecognized form: " << err.context;
-				break;
-			case unbound_variable:
-				os << "unbound variable: " << err.context;
-				break;
-			case illegal_argument:
-				os << "illegal argument: " << err.context;
-				break;
-
-			default:
-				os << "invalid error? " << (int)err.kind;
-		}
-
-		return os;
-	}
-};
-
-template <typename T>
-using result = std::expected<T, error>;
-
-namespace {
-
-template<typename T>
-T value_or_void(result<T> &ex) {
-	if constexpr (!std::is_same_v<T, void>)
-		return std::move(ex.value());
-}
-
-[[noreturn, maybe_unused]] void abort_due_to_error(const error &err) {
-	std::cerr << "aborting due to error: " << err << "\n";
-	abort();
-}
-
-} // namespace anonymous
-
-template <typename ...Ts>
-std::unexpected<error> fail(Ts &&...ts) {
-	return std::unexpected{error{std::forward<Ts>(ts)...}};
-}
-
-#define TRY(expr) \
-	({ \
-		auto TRY_result__ = (expr); \
-		if (!TRY_result__) \
-			return std::unexpected{TRY_result__.error()}; \
-		value_or_void(TRY_result__); \
-	})
-
-#define MUST(expr) \
-	({ \
-		auto MUST_result__ = (expr); \
-		if (!MUST_result__) \
-			abort_due_to_error(MUST_result__.error()); \
-		value_or_void(MUST_result__); \
-	})
 
 // ---------------------------------------------------------------------
 // Values
