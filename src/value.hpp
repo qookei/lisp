@@ -189,3 +189,14 @@ inline valuep make_macrolike_builtin(std::string name, builtin::fn_type tgt) {
 inline valuep make_nil() {
 	return std::make_shared<value>(nil{});
 }
+
+
+template <typename Ty>
+Ty *value_cast(value *v) {
+	return std::get_if<Ty>(v);
+}
+
+template <typename Ty>
+Ty *value_cast(const valuep &v) {
+	return std::get_if<Ty>(v.get());
+}

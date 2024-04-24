@@ -25,9 +25,9 @@
 
 template <typename F>
 result<valuep> map(valuep list, F &&func) {
-	if (std::get_if<nil>(list.get())) {
+	if (value_cast<nil>(list)) {
 		return make_nil();
-	} else if (auto kons = std::get_if<cons>(list.get())) {
+	} else if (auto kons = value_cast<cons>(list)) {
 		return make_cons(
 			TRY(func(kons->car)), TRY(map(kons->cdr, std::forward<F>(func))));
 	} else {
@@ -36,37 +36,37 @@ result<valuep> map(valuep list, F &&func) {
 }
 
 result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
-	if (std::get_if<number>(expr.get())) {
+	if (value_cast<number>(expr)) {
 		return expr;
-	} else if (auto sym = std::get_if<symbol>(expr.get())) {
+	} else if (auto sym = value_cast<symbol>(expr)) {
 		return env->lookup(sym->value);
 	} else {
-		auto kons = std::get_if<cons>(expr.get());
+		auto kons = value_cast<cons>(expr);
 		if (!kons)
 			return fail(error_kind::unrecognized_form,
 					std::format("unrecognized form {}", *expr));
 
 		auto fn = TRY(eval(kons->car, env));
 
-		if (auto bltn = std::get_if<builtin>(fn.get())) {
+		if (auto bltn = value_cast<builtin>(fn)) {
 			auto params_cons = bltn->evaluate_params
 				? TRY(map(kons->cdr, [&] (valuep expr) { return eval(expr, env); }))
 				: kons->cdr;
 
 			std::vector<valuep> params;
 
-			cons *kons = std::get_if<cons>(params_cons.get());
+			cons *kons = value_cast<cons>(params_cons);
 			while (kons) {
 				params.push_back(kons->car);
-				kons = std::get_if<cons>(kons->cdr.get());
+				kons = value_cast<cons>(kons->cdr);
 			}
 
 			return bltn->tgt(params, env);
-		} else if (auto lmbd = std::get_if<lambda>(fn.get())) {
+		} else if (auto lmbd = value_cast<lambda>(fn)) {
 			auto sub_env = std::make_shared<environment>();
 			sub_env->parent = lmbd->captured_environment;
 
-			if (auto formals_sym = std::get_if<symbol>(lmbd->formals.formals.get())) {
+			if (auto formals_sym = value_cast<symbol>(lmbd->formals.formals)) {
 				if (lmbd->is_macro) {
 					sub_env->values[formals_sym->value] = kons->cdr;
 					auto out_expr = TRY(eval(lmbd->body, sub_env));
@@ -79,14 +79,14 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 				return eval(lmbd->body, sub_env);
 			}
 
-			auto formals_cons = std::get_if<cons>(lmbd->formals.formals.get());
-			if (!formals_cons && !std::get_if<nil>(lmbd->formals.formals.get()))
+			auto formals_cons = value_cast<cons>(lmbd->formals.formals);
+			if (!formals_cons && !value_cast<nil>(lmbd->formals.formals))
 				return fail(error_kind::unrecognized_form,
 						std::format("lambda formals should be a list or symbol, not {}",
 								*lmbd->formals.formals));
 
-			auto params_cons = std::get_if<cons>(kons->cdr.get());
-			if (!params_cons && !std::get_if<nil>(kons->cdr.get()))
+			auto params_cons = value_cast<cons>(kons->cdr);
+			if (!params_cons && !value_cast<nil>(kons->cdr))
 				return fail(error_kind::unrecognized_form,
 						std::format("lambda parameters should be a list, not {}",
 								*kons->cdr));
@@ -100,7 +100,7 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 						std::format("lambda given parameters but takes none"));
 
 			while (formals_cons && params_cons) {
-				auto formal = std::get_if<symbol>(formals_cons->car.get());
+				auto formal = value_cast<symbol>(formals_cons->car);
 				if (!formal)
 					return fail(error_kind::unrecognized_form,
 						std::format("lambda formal should be a symbol, not {}",
@@ -111,7 +111,7 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 				sub_env->values[formal->value] = lmbd->is_macro ? value : TRY(eval(value, env));
 
 				// Special case: formals are an improper list
-				if (auto last_formal = std::get_if<symbol>(formals_cons->cdr.get())) {
+				if (auto last_formal = value_cast<symbol>(formals_cons->cdr)) {
 					if (lmbd->is_macro) {
 						sub_env->values[last_formal->value] = params_cons->cdr;
 						break;
@@ -123,34 +123,34 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 				}
 
 				// If this is the end of formals, make sure the argument list ends as well
-				if (std::get_if<nil>(formals_cons->cdr.get())
-						&& !std::get_if<nil>(params_cons->cdr.get()))
+				if (value_cast<nil>(formals_cons->cdr)
+						&& !value_cast<nil>(params_cons->cdr))
 					return fail(error_kind::unrecognized_form,
 						std::format("too many parameters, left over parameters are {}",
 								*params_cons->cdr));
 
 				// If this is the end of params, make sure the formals end as well
-				if (std::get_if<nil>(params_cons->cdr.get())
-						&& !std::get_if<nil>(formals_cons->cdr.get()))
+				if (value_cast<nil>(params_cons->cdr)
+						&& !value_cast<nil>(formals_cons->cdr))
 					return fail(error_kind::unrecognized_form,
 						std::format("not enough parameters, missing parameters for {}",
 								*formals_cons->cdr));
 
-				if (!std::get_if<cons>(formals_cons->cdr.get()) &&
-						!std::get_if<nil>(formals_cons->cdr.get()))
+				if (!value_cast<cons>(formals_cons->cdr) &&
+						!value_cast<nil>(formals_cons->cdr))
 					return fail(error_kind::unrecognized_form,
 						std::format("lambda formals should be a list, not {}",
 								*formals_cons->cdr));
 
 
-				if (!std::get_if<cons>(params_cons->cdr.get()) &&
-						!std::get_if<nil>(params_cons->cdr.get()))
+				if (!value_cast<cons>(params_cons->cdr) &&
+						!value_cast<nil>(params_cons->cdr))
 					return fail(error_kind::unrecognized_form,
 						std::format("lambda parameters should be a list, not {}",
 								*params_cons->cdr));
 
-				formals_cons = std::get_if<cons>(formals_cons->cdr.get());
-				params_cons = std::get_if<cons>(params_cons->cdr.get());
+				formals_cons = value_cast<cons>(formals_cons->cdr);
+				params_cons = value_cast<cons>(params_cons->cdr);
 			}
 
 			if (lmbd->is_macro) {
@@ -171,11 +171,11 @@ namespace {
 result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env);
 
 std::tuple<valuep, bool> unpack_unquote(cons *kons) {
-	if (auto sym = std::get_if<symbol>(kons->car.get());
+	if (auto sym = value_cast<symbol>(kons->car);
 			sym && (sym->value == "unquote"
 					|| sym->value == "unquote-splicing")) {
-		if (auto unquoted_cons = std::get_if<cons>(kons->cdr.get());
-				unquoted_cons && std::get_if<nil>(unquoted_cons->cdr.get())) {
+		if (auto unquoted_cons = value_cast<cons>(kons->cdr);
+				unquoted_cons && value_cast<nil>(unquoted_cons->cdr)) {
 			return std::make_tuple(unquoted_cons->car,
 					sym->value == "unquote-splicing");
 		}
@@ -186,7 +186,7 @@ std::tuple<valuep, bool> unpack_unquote(cons *kons) {
 
 result<std::tuple<valuep, bool>>
 quasi_eval_unquote(valuep expr, std::shared_ptr<environment> env) {
-	if (auto kons = std::get_if<cons>(expr.get())) {
+	if (auto kons = value_cast<cons>(expr)) {
 		if (auto [unquoted, splice] = unpack_unquote(kons); unquoted) {
 			return std::make_tuple(
 				TRY(eval(unquoted, env)),
@@ -200,7 +200,7 @@ quasi_eval_unquote(valuep expr, std::shared_ptr<environment> env) {
 }
 
 result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
-	if (auto kons = std::get_if<cons>(expr.get())) {
+	if (auto kons = value_cast<cons>(expr)) {
 		if (auto [unquoted, splice] = unpack_unquote(kons); unquoted) {
 			if (!splice) {
 				return eval(unquoted, env);
@@ -213,27 +213,27 @@ result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
 		auto out = make_cons(make_nil(), make_nil());
 
 		auto in_cur = kons;
-		auto out_cur = std::get_if<cons>(out.get());
+		auto out_cur = value_cast<cons>(out);
 
 		while (in_cur) {
 			auto [expr, splice] = TRY(quasi_eval_unquote(in_cur->car, env));
 
 			if (splice) {
-				auto new_cons = std::get_if<cons>(expr.get());
+				auto new_cons = value_cast<cons>(expr);
 				// !new_cons happens for e.g. `(,@1) => 1
 				if (!new_cons) {
-					auto out_cons = std::get_if<cons>(out.get());
+					auto out_cons = value_cast<cons>(out);
 					assert(out_cons);
 
 					// Make sure out was empty
-					if (!std::get_if<nil>(out_cons->car.get())
-							|| !std::get_if<nil>(out_cons->cdr.get()))
+					if (!value_cast<nil>(out_cons->car)
+							|| !value_cast<nil>(out_cons->cdr))
 						return fail(error_kind::illegal_argument,
 								std::format("unquote-splicing of a non-cons replaces the outer list, but it's not empty: {}",
 										*out));
 
 					// Make sure in_cur->cdr is nil (since we're discarding the rest of the input)
-					if (!std::get_if<nil>(in_cur->cdr.get()))
+					if (!value_cast<nil>(in_cur->cdr))
 						return fail(error_kind::illegal_argument,
 								std::format("unquote-splicing of a non-cons replaces the outer list, but the input list has trailing elements: {}",
 										*in_cur->cdr));
@@ -246,23 +246,23 @@ result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
 				*out_cur = *new_cons;
 
 				// Advance out_cur s.t. out_cur->cdr is not a cons
-				while (std::get_if<cons>(out_cur->cdr.get()))
-					out_cur = std::get_if<cons>(out_cur->cdr.get());
+				while (value_cast<cons>(out_cur->cdr))
+					out_cur = value_cast<cons>(out_cur->cdr);
 			} else {
 				out_cur->car = expr;
 			}
 
-			auto next_in_cons = std::get_if<cons>(in_cur->cdr.get());
+			auto next_in_cons = value_cast<cons>(in_cur->cdr);
 
 			if (!next_in_cons) { // improper list
-				if (!std::get_if<nil>(in_cur->cdr.get())) {
+				if (!value_cast<nil>(in_cur->cdr)) {
 					out_cur->cdr = TRY(quasi_unquote(in_cur->car, env));
 				}
 			} else {
 				// Make sure the output cdr is nil (if we've unspliced an
 				// improper list, it could be something else)
 
-				if (!std::get_if<nil>(out_cur->cdr.get()))
+				if (!value_cast<nil>(out_cur->cdr))
 					return fail(error_kind::illegal_argument,
 							std::format("unquote-splicing produced an improper list, but we're not done with quasiquote! (cdr output) => {}, (cdr input) => {}",
 									*out_cur->cdr,
@@ -270,7 +270,7 @@ result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
 
 				// Add a new empty cons in the output and advance to it
 				out_cur->cdr = make_cons(make_nil(), make_nil());
-				out_cur = std::get_if<cons>(out_cur->cdr.get());
+				out_cur = value_cast<cons>(out_cur->cdr);
 			}
 
 			in_cur = next_in_cons;
@@ -312,7 +312,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 			if (params.size() != 1)
 				return fail(error_kind::unrecognized_form, "car takes 1 parameter");
 
-			auto kons = std::get_if<cons>(params[0].get());
+			auto kons = value_cast<cons>(params[0]);
 			if (!kons)
 				return fail(error_kind::illegal_argument,
 						std::format("car expects a cons, not {}", *params[0]));
@@ -326,7 +326,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 			if (params.size() != 1)
 				return fail(error_kind::unrecognized_form, "cdr takes 1 parameter");
 
-			auto kons = std::get_if<cons>(params[0].get());
+			auto kons = value_cast<cons>(params[0]);
 			if (!kons)
 				return fail(error_kind::illegal_argument,
 						std::format("cdr expects a cons, not {}", *params[0]));
@@ -340,7 +340,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 			if (params.size() != 1)
 				return fail(error_kind::unrecognized_form, "nil? takes 1 parameter");
 
-			return make_number(!!std::get_if<nil>(params[0].get()));
+			return make_number(!!value_cast<nil>(params[0]));
 		});
 
 	functionlike(
@@ -349,12 +349,12 @@ std::shared_ptr<environment> prepare_root_environment() {
 			if (params.size() != 2)
 				return fail(error_kind::unrecognized_form, "eq? takes 2 parameter");
 
-			if (auto left_num = std::get_if<number>(params[0].get()),
-					right_num = std::get_if<number>(params[1].get());
+			if (auto left_num = value_cast<number>(params[0]),
+					right_num = value_cast<number>(params[1]);
 					left_num && right_num && left_num->value == right_num->value) {
 				return make_number(1);
-			} else if (auto left_sym = std::get_if<symbol>(params[0].get()),
-					right_sym = std::get_if<symbol>(params[1].get());
+			} else if (auto left_sym = value_cast<symbol>(params[0]),
+					right_sym = value_cast<symbol>(params[1]);
 					left_sym && right_sym && left_sym->value == right_sym->value) {
 				return make_number(1);
 			} else {
@@ -368,7 +368,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 			int result = 0;
 
 			for (auto param : params) {
-				auto num = std::get_if<number>(param.get());
+				auto num = value_cast<number>(param);
 				if (!num)
 					return fail(error_kind::illegal_argument,
 							std::format("+ expects a number, not {}", *param));
@@ -385,7 +385,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 			int result = 1;
 
 			for (auto param : params) {
-				auto num = std::get_if<number>(param.get());
+				auto num = value_cast<number>(param);
 				if (!num)
 					return fail(error_kind::illegal_argument,
 							std::format("* expects a number, not {}", *param));
@@ -431,7 +431,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 
 			auto condition = TRY(eval(params[0], env));
 
-			if (auto val = std::get_if<number>(condition.get()); !val || val->value) {
+			if (auto val = value_cast<number>(condition); !val || val->value) {
 				return eval(params[1], env);
 			} else {
 				return eval(params[2], env);
@@ -454,16 +454,16 @@ std::shared_ptr<environment> prepare_root_environment() {
 			if (params.size() != 2)
 				return fail(error_kind::unrecognized_form, "define takes 2 parameters");
 
-			if (auto name = std::get_if<symbol>(params[0].get())) {
+			if (auto name = value_cast<symbol>(params[0])) {
 				// (define name value)
 
 				auto value = TRY(eval(params[1], env));
 				env->values[name->value] = value;
 				return value;
-			} else if (auto name_and_formals = std::get_if<cons>(params[0].get())) {
+			} else if (auto name_and_formals = value_cast<cons>(params[0])) {
 				// (define (name formals...) body)
 
-				auto name = std::get_if<symbol>(name_and_formals->car.get());
+				auto name = value_cast<symbol>(name_and_formals->car);
 				auto formals = name_and_formals->cdr;
 				if (!name)
 					return fail(error_kind::illegal_argument,
@@ -483,10 +483,10 @@ std::shared_ptr<environment> prepare_root_environment() {
 			if (params.size() != 2)
 				return fail(error_kind::unrecognized_form, "define-macro takes 2 parameters");
 
-			if (auto name_and_formals = std::get_if<cons>(params[0].get())) {
+			if (auto name_and_formals = value_cast<cons>(params[0])) {
 				// (define-macro (name formals...) body)
 
-				auto name = std::get_if<symbol>(name_and_formals->car.get());
+				auto name = value_cast<symbol>(name_and_formals->car);
 				auto formals = name_and_formals->cdr;
 				if (!name)
 					return fail(error_kind::illegal_argument,
