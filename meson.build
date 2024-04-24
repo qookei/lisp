@@ -8,6 +8,7 @@ exe = executable('lisp',
 		 'lisp.cpp',
 		 'token.cpp',
 		 'parse.cpp',
+		 'eval.cpp',
 		 install : true)
 
 test('basic', exe)
