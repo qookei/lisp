@@ -11,4 +11,4 @@ exe = executable('lisp',
 		 'src/eval.cpp',
 		 install : true)
 
-test('basic', exe)
+subdir('tests')
