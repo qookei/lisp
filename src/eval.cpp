@@ -39,7 +39,7 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 	if (value_cast<number>(expr)) {
 		return expr;
 	} else if (auto sym = value_cast<symbol>(expr)) {
-		return env->lookup(sym->value);
+		return env->lookup(sym->val);
 	} else {
 		auto kons = value_cast<cons>(expr);
 		if (!kons)
@@ -68,12 +68,12 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 
 			if (auto formals_sym = value_cast<symbol>(lmbd->formals.formals)) {
 				if (lmbd->is_macro) {
-					sub_env->values[formals_sym->value] = kons->cdr;
+					sub_env->values[formals_sym->val] = kons->cdr;
 					auto out_expr = TRY(eval(lmbd->body, sub_env));
 					return eval(out_expr, env);
 				}
 
-				sub_env->values[formals_sym->value] = TRY(
+				sub_env->values[formals_sym->val] = TRY(
 					map(kons->cdr, [&] (valuep expr) { return eval(expr, env); }));
 
 				return eval(lmbd->body, sub_env);
@@ -108,16 +108,16 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 
 				auto value = params_cons->car;
 
-				sub_env->values[formal->value] = lmbd->is_macro ? value : TRY(eval(value, env));
+				sub_env->values[formal->val] = lmbd->is_macro ? value : TRY(eval(value, env));
 
 				// Special case: formals are an improper list
 				if (auto last_formal = value_cast<symbol>(formals_cons->cdr)) {
 					if (lmbd->is_macro) {
-						sub_env->values[last_formal->value] = params_cons->cdr;
+						sub_env->values[last_formal->val] = params_cons->cdr;
 						break;
 					}
 
-					sub_env->values[last_formal->value] = TRY(
+					sub_env->values[last_formal->val] = TRY(
 						map(params_cons->cdr, [&] (valuep expr) { return eval(expr, env); }));
 					break;
 				}
@@ -172,12 +172,12 @@ result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env);
 
 std::tuple<valuep, bool> unpack_unquote(cons *kons) {
 	if (auto sym = value_cast<symbol>(kons->car);
-			sym && (sym->value == "unquote"
-					|| sym->value == "unquote-splicing")) {
+			sym && (sym->val == "unquote"
+					|| sym->val == "unquote-splicing")) {
 		if (auto unquoted_cons = value_cast<cons>(kons->cdr);
 				unquoted_cons && value_cast<nil>(unquoted_cons->cdr)) {
 			return std::make_tuple(unquoted_cons->car,
-					sym->value == "unquote-splicing");
+					sym->val == "unquote-splicing");
 		}
 	}
 
@@ -351,11 +351,11 @@ std::shared_ptr<environment> prepare_root_environment() {
 
 			if (auto left_num = value_cast<number>(params[0]),
 					right_num = value_cast<number>(params[1]);
-					left_num && right_num && left_num->value == right_num->value) {
+					left_num && right_num && left_num->val == right_num->val) {
 				return make_number(1);
 			} else if (auto left_sym = value_cast<symbol>(params[0]),
 					right_sym = value_cast<symbol>(params[1]);
-					left_sym && right_sym && left_sym->value == right_sym->value) {
+					left_sym && right_sym && left_sym->val == right_sym->val) {
 				return make_number(1);
 			} else {
 				return make_number(0);
@@ -373,7 +373,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 					return fail(error_kind::illegal_argument,
 							std::format("+ expects a number, not {}", *param));
 
-				result += num->value;
+				result += num->val;
 			}
 
 			return make_number(result);
@@ -390,7 +390,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 					return fail(error_kind::illegal_argument,
 							std::format("* expects a number, not {}", *param));
 
-				result *= num->value;
+				result *= num->val;
 			}
 
 			return make_number(result);
@@ -431,7 +431,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 
 			auto condition = TRY(eval(params[0], env));
 
-			if (auto val = value_cast<number>(condition); !val || val->value) {
+			if (auto val = value_cast<number>(condition); !val || val->val) {
 				return eval(params[1], env);
 			} else {
 				return eval(params[2], env);
@@ -458,7 +458,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 				// (define name value)
 
 				auto value = TRY(eval(params[1], env));
-				env->values[name->value] = value;
+				env->values[name->val] = value;
 				return value;
 			} else if (auto name_and_formals = value_cast<cons>(params[0])) {
 				// (define (name formals...) body)
@@ -470,7 +470,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 							std::format("define expects a symbol for name, not {}", *name_and_formals->car));
 
 				auto value = make_lambda(function_formals{formals}, params[1], env);
-				env->values[name->value] = value;
+				env->values[name->val] = value;
 				return value;
 			}
 			return fail(error_kind::illegal_argument,
@@ -493,7 +493,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 							std::format("define-macro expects a symbol for name, not {}", *name_and_formals->car));
 
 				auto value = make_macro(function_formals{formals}, params[1], env);
-				env->values[name->value] = value;
+				env->values[name->val] = value;
 				return value;
 			}
 			return fail(error_kind::illegal_argument,

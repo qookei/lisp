@@ -31,9 +31,9 @@ struct parser {
 
 		if ((sym.value[0] == '-' && sym.value.size() > 1 && std::ranges::all_of(sym.value.substr(1), is_digit))
 				|| std::ranges::all_of(sym.value, is_digit))
-			return std::make_shared<value>(number{std::stoi(sym.value)});
+			return make_number(std::stoi(sym.value));
 
-		return std::make_shared<value>(symbol{std::move(sym.value)});
+		return make_symbol(std::move(sym.value));
 	}
 
 	result<valuep> wrapped_expr(std::string_view name) {
