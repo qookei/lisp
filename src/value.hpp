@@ -333,10 +333,10 @@ struct builtin : value {
 };
 static_assert(value_subtype<builtin>);
 
-inline valuep make_functionlike_builtin(std::string name, builtin::fn_type tgt) {
-	return std::make_shared<builtin>(function_formals{}, std::move(name), true, tgt);
+inline valuep make_functionlike_builtin(std::string name, function_formals formals, builtin::fn_type tgt) {
+	return std::make_shared<builtin>(std::move(formals), std::move(name), true, tgt);
 }
 
-inline valuep make_macrolike_builtin(std::string name, builtin::fn_type tgt) {
-	return std::make_shared<builtin>(function_formals{}, std::move(name), false, tgt);
+inline valuep make_macrolike_builtin(std::string name, function_formals formals, builtin::fn_type tgt) {
+	return std::make_shared<builtin>(std::move(formals), std::move(name), false, tgt);
 }

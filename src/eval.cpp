@@ -18,8 +18,11 @@
 
 
 #include "eval.hpp"
+#include "token.hpp"
+#include "parse.hpp"
 
 #include <cassert>
+#include <sstream>
 #include <format>
 
 
@@ -49,17 +52,35 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 		auto fn = TRY(eval(kons->car, env));
 
 		if (auto bltn = value_cast<builtin>(fn)) {
-			auto params_cons = bltn->evaluate_params
-				? TRY(map(kons->cdr, [&] (valuep expr) { return eval(expr, env); }))
-				: kons->cdr;
-
 			std::vector<valuep> params;
 
-			cons *kons = value_cast<cons>(params_cons);
-			while (kons) {
-				params.push_back(kons->car);
-				kons = value_cast<cons>(kons->cdr);
-			}
+			TRY(bltn->formals.map_params(
+					kons->cdr,
+					[&] (std::string, bool rest, valuep expr) -> result<void> {
+						if (rest) {
+							auto values =
+								!bltn->evaluate_params
+								? expr
+								: TRY(map(expr, [&] (valuep expr) {
+									return eval(expr, env);
+								}));
+
+							while (values->type() == value_type::cons) {
+								auto cur_cons = value_cast<cons>(values);
+								assert(cur_cons);
+
+								params.push_back(cur_cons->car);
+
+								values = cur_cons->cdr;
+							}
+						} else {
+							params.push_back(
+								!bltn->evaluate_params
+								? expr : TRY(eval(expr, env)));
+						}
+
+						return {};
+					}));
 
 			return bltn->tgt(params, env);
 		} else if (auto lmbd = value_cast<lambda>(fn)) {
@@ -214,29 +235,35 @@ result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
 std::shared_ptr<environment> prepare_root_environment() {
 	auto root_env = std::make_shared<environment>();
 
-	auto functionlike = [&] (std::string name, builtin::fn_type tgt) {
-		root_env->values[name] = make_functionlike_builtin(name, tgt);
+	auto functionlike = [&] (std::string name, std::string formals, builtin::fn_type tgt) {
+		std::istringstream ss{formals};
+		auto tokens = tokenize(ss);
+		auto it = tokens.begin();
+		auto formals_expr = MUST(parse_expr(it));
+
+		root_env->values[name] = make_functionlike_builtin(name,
+				MUST(function_formals::parse(formals_expr)), tgt);
 	};
 
-	auto macrolike = [&] (std::string name, builtin::fn_type tgt) {
-		root_env->values[name] = make_macrolike_builtin(name, tgt);
+	auto macrolike = [&] (std::string name, std::string formals, builtin::fn_type tgt) {
+		std::istringstream ss{formals};
+		auto tokens = tokenize(ss);
+		auto it = tokens.begin();
+		auto formals_expr = MUST(parse_expr(it));
+
+		root_env->values[name] = make_macrolike_builtin(name,
+				MUST(function_formals::parse(formals_expr)), tgt);
 	};
 
 	functionlike(
-		"cons",
+		"cons", "(_ _)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			if (params.size() != 2)
-				return fail(error_kind::unrecognized_form, "cons takes 2 parameters");
-
 			return make_cons(params[0], params[1]);
 		});
 
 	functionlike(
-		"car",
+		"car", "(_)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			if (params.size() != 1)
-				return fail(error_kind::unrecognized_form, "car takes 1 parameter");
-
 			auto kons = value_cast<cons>(params[0]);
 			if (!kons)
 				return fail(error_kind::illegal_argument,
@@ -246,11 +273,8 @@ std::shared_ptr<environment> prepare_root_environment() {
 		});
 
 	functionlike(
-		"cdr",
+		"cdr", "(_)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			if (params.size() != 1)
-				return fail(error_kind::unrecognized_form, "cdr takes 1 parameter");
-
 			auto kons = value_cast<cons>(params[0]);
 			if (!kons)
 				return fail(error_kind::illegal_argument,
@@ -260,20 +284,14 @@ std::shared_ptr<environment> prepare_root_environment() {
 		});
 
 	functionlike(
-		"nil?",
+		"nil?", "(_)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			if (params.size() != 1)
-				return fail(error_kind::unrecognized_form, "nil? takes 1 parameter");
-
 			return make_number(!!value_cast<nil>(params[0]));
 		});
 
 	functionlike(
-		"eq?",
+		"eq?", "(_ _)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			if (params.size() != 2)
-				return fail(error_kind::unrecognized_form, "eq? takes 2 parameter");
-
 			if (auto left_num = value_cast<number>(params[0]),
 					right_num = value_cast<number>(params[1]);
 					left_num && right_num && left_num->val == right_num->val) {
@@ -288,7 +306,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 		});
 
 	functionlike(
-		"+",
+		"+", "_",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
 			int result = 0;
 
@@ -305,7 +323,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 		});
 
 	functionlike(
-		"*",
+		"*", "_",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
 			int result = 1;
 
@@ -322,38 +340,26 @@ std::shared_ptr<environment> prepare_root_environment() {
 		});
 
 	functionlike(
-		"eval",
+		"eval", "(_)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (params.size() != 1)
-				return fail(error_kind::unrecognized_form, "eval takes 1 parameter");
-
 			return eval(params[0], env); // TODO: env argument?
 		});
 
 	macrolike(
-		"quote",
+		"quote", "(_)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			if (params.size() != 1)
-				return fail(error_kind::unrecognized_form, "quote takes 1 parameter");
-
 			return params[0];
 		});
 
 	macrolike(
-		"quasiquote",
+		"quasiquote", "(_)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (params.size() != 1)
-				return fail(error_kind::unrecognized_form, "quasiquote takes 1 parameter");
-
 			return quasi_unquote(params[0], env);
 		});
 
 	macrolike(
-		"if",
+		"if", "(_ _ _)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (params.size() != 3)
-				return fail(error_kind::unrecognized_form, "if takes 3 parameters");
-
 			auto condition = TRY(eval(params[0], env));
 
 			if (auto val = value_cast<number>(condition); !val || val->val) {
@@ -364,21 +370,15 @@ std::shared_ptr<environment> prepare_root_environment() {
 		});
 
 	macrolike(
-		"lambda",
+		"lambda", "(_ _)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (params.size() != 2)
-				return fail(error_kind::unrecognized_form, "lambda takes 2 parameters");
-
 			return make_lambda(TRY(function_formals::parse(params[0])), params[1], env);
 		});
 	root_env->values["λ"] = root_env->values["lambda"];
 
 	macrolike(
-		"define",
+		"define", "(_ _)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (params.size() != 2)
-				return fail(error_kind::unrecognized_form, "define takes 2 parameters");
-
 			if (auto name = value_cast<symbol>(params[0])) {
 				// (define name value)
 
@@ -403,11 +403,8 @@ std::shared_ptr<environment> prepare_root_environment() {
 		});
 
 	macrolike(
-		"define-macro",
+		"define-macro", "(_ _)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (params.size() != 2)
-				return fail(error_kind::unrecognized_form, "define-macro takes 2 parameters");
-
 			if (auto name_and_formals = value_cast<cons>(params[0])) {
 				// (define-macro (name formals...) body)
 
