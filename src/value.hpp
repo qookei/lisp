@@ -25,6 +25,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <concepts>
+#include <cassert>
 #include <ostream>
 #include <sstream>
 #include <utility>
@@ -225,7 +226,56 @@ inline valuep make_nil() {
 
 
 struct function_formals {
-	valuep formals;
+	struct item {
+		std::string name;
+		bool rest;
+	};
+
+	std::vector<item> items{};
+
+	static result<function_formals> parse(valuep formals);
+
+	template <typename F>
+	result<void> map_params(valuep params, F &&fn) const {
+		auto item_it = items.begin();
+		auto cur = params;
+
+		while (item_it != items.end() && cur->type() == value_type::cons) {
+			const auto &item = *item_it;
+			if (item.rest) {
+				++item_it;
+				assert(item_it == items.end());
+
+				TRY(fn(item.name, true, cur));
+				return {};
+			}
+
+			auto cur_cons = value_cast<cons>(cur);
+			assert(cur_cons);
+
+			TRY(fn(item.name, false, cur_cons->car));
+
+			cur = cur_cons->cdr;
+			item_it++;
+		}
+
+		if (params->type() != value_type::nil && params->type() != value_type::cons) {
+			return fail(error_kind::unrecognized_form,
+					std::format("parameters should be a list, not {}",
+							*params));
+		} else if (cur->type() == value_type::cons) {
+			return fail(error_kind::unrecognized_form,
+					std::format("too many parameters, left over {}", *cur));
+		} else if (item_it != items.end()) {
+			return fail(error_kind::unrecognized_form,
+					std::format("not enough parameters, first missing paramer is {}",
+							item_it->name));
+		}
+
+		return {};
+	}
+
+	friend std::ostream &operator<<(std::ostream &os, const function_formals &self);
 };
 
 struct lambda : value {
@@ -238,7 +288,7 @@ struct lambda : value {
 
 	virtual std::ostream &format(std::ostream &os) const override {
 		return os << (is_macro ? "[macro " : "[lambda ")
-				<< static_cast<const void *>(this) << " " << formals.formals
+				<< static_cast<const void *>(this) << " " << formals
 				<< " (env " << captured_environment.get() << ")]";
 	}
 
@@ -270,7 +320,7 @@ struct builtin : value {
 
 	virtual std::ostream &format(std::ostream &os) const override {
 		return os << (evaluate_params ? "[built-in macro " : "[built-in procedure ")
-				<< name << " " << formals.formals << "]";
+				<< name << " " << formals << "]";
 	}
 
 	function_formals formals;

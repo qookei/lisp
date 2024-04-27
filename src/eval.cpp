@@ -66,92 +66,17 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 			auto sub_env = std::make_shared<environment>();
 			sub_env->parent = lmbd->captured_environment;
 
-			if (auto formals_sym = value_cast<symbol>(lmbd->formals.formals)) {
-				if (lmbd->is_macro) {
-					sub_env->values[formals_sym->val] = kons->cdr;
-					auto out_expr = TRY(eval(lmbd->body, sub_env));
-					return eval(out_expr, env);
-				}
-
-				sub_env->values[formals_sym->val] = TRY(
-					map(kons->cdr, [&] (valuep expr) { return eval(expr, env); }));
-
-				return eval(lmbd->body, sub_env);
-			}
-
-			auto formals_cons = value_cast<cons>(lmbd->formals.formals);
-			if (!formals_cons && !value_cast<nil>(lmbd->formals.formals))
-				return fail(error_kind::unrecognized_form,
-						std::format("lambda formals should be a list or symbol, not {}",
-								*lmbd->formals.formals));
-
-			auto params_cons = value_cast<cons>(kons->cdr);
-			if (!params_cons && !value_cast<nil>(kons->cdr))
-				return fail(error_kind::unrecognized_form,
-						std::format("lambda parameters should be a list, not {}",
-								*kons->cdr));
-
-			if (!params_cons && formals_cons)
-				return fail(error_kind::illegal_argument,
-						std::format("lambda takes parameters but none were given"));
-
-			if (params_cons && !formals_cons)
-				return fail(error_kind::illegal_argument,
-						std::format("lambda given parameters but takes none"));
-
-			while (formals_cons && params_cons) {
-				auto formal = value_cast<symbol>(formals_cons->car);
-				if (!formal)
-					return fail(error_kind::unrecognized_form,
-						std::format("lambda formal should be a symbol, not {}",
-								*formals_cons->car));
-
-				auto value = params_cons->car;
-
-				sub_env->values[formal->val] = lmbd->is_macro ? value : TRY(eval(value, env));
-
-				// Special case: formals are an improper list
-				if (auto last_formal = value_cast<symbol>(formals_cons->cdr)) {
-					if (lmbd->is_macro) {
-						sub_env->values[last_formal->val] = params_cons->cdr;
-						break;
-					}
-
-					sub_env->values[last_formal->val] = TRY(
-						map(params_cons->cdr, [&] (valuep expr) { return eval(expr, env); }));
-					break;
-				}
-
-				// If this is the end of formals, make sure the argument list ends as well
-				if (value_cast<nil>(formals_cons->cdr)
-						&& !value_cast<nil>(params_cons->cdr))
-					return fail(error_kind::unrecognized_form,
-						std::format("too many parameters, left over parameters are {}",
-								*params_cons->cdr));
-
-				// If this is the end of params, make sure the formals end as well
-				if (value_cast<nil>(params_cons->cdr)
-						&& !value_cast<nil>(formals_cons->cdr))
-					return fail(error_kind::unrecognized_form,
-						std::format("not enough parameters, missing parameters for {}",
-								*formals_cons->cdr));
-
-				if (!value_cast<cons>(formals_cons->cdr) &&
-						!value_cast<nil>(formals_cons->cdr))
-					return fail(error_kind::unrecognized_form,
-						std::format("lambda formals should be a list, not {}",
-								*formals_cons->cdr));
-
-
-				if (!value_cast<cons>(params_cons->cdr) &&
-						!value_cast<nil>(params_cons->cdr))
-					return fail(error_kind::unrecognized_form,
-						std::format("lambda parameters should be a list, not {}",
-								*params_cons->cdr));
-
-				formals_cons = value_cast<cons>(formals_cons->cdr);
-				params_cons = value_cast<cons>(params_cons->cdr);
-			}
+			TRY(lmbd->formals.map_params(
+					kons->cdr,
+					[&] (std::string name, bool rest, valuep expr) -> result<void> {
+						sub_env->values[name] =
+							lmbd->is_macro
+							? expr : rest
+							? TRY(map(expr, [&] (valuep expr) {
+								return eval(expr, env);
+							})) : TRY(eval(expr, env));
+						return {};
+					}));
 
 			if (lmbd->is_macro) {
 				auto out_expr = TRY(eval(lmbd->body, sub_env));
@@ -444,7 +369,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 			if (params.size() != 2)
 				return fail(error_kind::unrecognized_form, "lambda takes 2 parameters");
 
-			return make_lambda(function_formals{params[0]}, params[1], env);
+			return make_lambda(TRY(function_formals::parse(params[0])), params[1], env);
 		});
 	root_env->values["λ"] = root_env->values["lambda"];
 
@@ -469,7 +394,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 					return fail(error_kind::illegal_argument,
 							std::format("define expects a symbol for name, not {}", *name_and_formals->car));
 
-				auto value = make_lambda(function_formals{formals}, params[1], env);
+				auto value = make_lambda(TRY(function_formals::parse(formals)), params[1], env);
 				env->values[name->val] = value;
 				return value;
 			}
@@ -492,7 +417,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 					return fail(error_kind::illegal_argument,
 							std::format("define-macro expects a symbol for name, not {}", *name_and_formals->car));
 
-				auto value = make_macro(function_formals{formals}, params[1], env);
+				auto value = make_macro(TRY(function_formals::parse(formals)), params[1], env);
 				env->values[name->val] = value;
 				return value;
 			}

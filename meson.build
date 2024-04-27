@@ -8,6 +8,7 @@ exe = executable('lisp',
 		 'src/main.cpp',
 		 'src/token.cpp',
 		 'src/parse.cpp',
+		 'src/value.cpp',
 		 'src/eval.cpp',
 		 install : true)
 
