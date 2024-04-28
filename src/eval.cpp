@@ -18,8 +18,6 @@
 
 
 #include "eval.hpp"
-#include "token.hpp"
-#include "parse.hpp"
 
 #include <cassert>
 #include <sstream>
@@ -197,195 +195,190 @@ result<valuep> quasi_unquote(valuep expr, std::shared_ptr<environment> env) {
 } // namespace anonymous
 
 
+namespace builtins {
+
+result<valuep> cons_(valuep car, valuep cdr) {
+	return make_cons(car, cdr);
+}
+
+result<valuep> car(cons *kons) {
+	return kons->car;
+}
+
+result<valuep> cdr(cons *kons) {
+	return kons->cdr;
+}
+
+result<valuep> nil_p(valuep expr) {
+	return make_number(expr->type() == value_type::nil);
+}
+
+bool equal_p_impl(valuep left, valuep right) {
+	if (left == right)
+		return true;
+
+	if (left->type() != right->type())
+		return false;
+
+	switch (left->type()) {
+		case value_type::nil: {
+			return true;
+		}
+		case value_type::symbol: {
+			auto left_sym = value_cast<symbol>(left);
+			assert(left_sym);
+			auto right_sym = value_cast<symbol>(right);
+			assert(right_sym);
+
+			return left_sym->val == right_sym->val;
+		}
+		case value_type::number: {
+			auto left_num = value_cast<number>(left);
+			assert(left_num);
+			auto right_num = value_cast<number>(right);
+			assert(right_num);
+
+			return left_num->val == right_num->val;
+		}
+		case value_type::cons: {
+			auto left_cons = value_cast<cons>(left);
+			assert(left_cons);
+			auto right_cons = value_cast<cons>(right);
+			assert(right_cons);
+
+			return equal_p_impl(left_cons->car, right_cons->car)
+				&& equal_p_impl(left_cons->cdr, right_cons->cdr);
+		}
+		default:
+			// Callables are not comparable unless they are the same
+			// object (handled at the start of equal_p_impl)
+			return false;
+	}
+
+}
+
+result<valuep> equal_p(valuep left, valuep right) {
+	return make_number(equal_p_impl(left, right));
+}
+
+// TODO: Once we support std::vector<number *> switch over to it
+template <typename F, int Init>
+result<valuep> arith_fold(std::vector<valuep> params) {
+	int result = Init;
+
+	for (auto param : params) {
+		auto num = value_cast<number>(param);
+		if (!num)
+			return fail(error_kind::illegal_argument,
+					std::format("expected a number, not {}", *param));
+
+		result = F{}(result, num->val);
+	}
+
+	return make_number(result);
+}
+
+result<valuep> eval_(std::shared_ptr<environment> env, valuep expr) {
+	return eval(expr, env); // TODO: env argument?
+}
+
+result<valuep> quote(valuep expr) {
+	return expr;
+}
+
+result<valuep> quasiquote(std::shared_ptr<environment> env, valuep expr) {
+	return quasi_unquote(expr, env);
+}
+
+result<valuep> if_(std::shared_ptr<environment> env, valuep condition_expr, valuep consequent, valuep alternate) {
+	auto condition = TRY(eval(condition_expr, env));
+
+	if (auto val = value_cast<number>(condition); !val || val->val) {
+		return eval(consequent, env);
+	} else {
+		return eval(alternate, env);
+	}
+}
+
+result<valuep> lambda(std::shared_ptr<environment> env, valuep formals, valuep body) {
+	return make_lambda2(TRY(function_formals::parse(formals)), body, env);
+}
+
+result<valuep> define(std::shared_ptr<environment> env, valuep tgt, valuep body) {
+	if (auto name = value_cast<symbol>(tgt)) {
+		// (define name value)
+
+		auto value = TRY(eval(body, env));
+		env->values[name->val] = value;
+		return value;
+	} else if (auto name_and_formals = value_cast<cons>(tgt)) {
+		// (define (name formals...) body)
+
+		auto name = value_cast<symbol>(name_and_formals->car);
+		auto formals = name_and_formals->cdr;
+		if (!name)
+			return fail(error_kind::illegal_argument, std::format(
+						"define expects a symbol for name, not {}",
+						*name_and_formals->car));
+
+		auto value = make_lambda2(TRY(function_formals::parse(formals)), body, env);
+		env->values[name->val] = value;
+		return value;
+	}
+
+	return fail(error_kind::illegal_argument, std::format(
+				"define expects either a cons for name and formals, or a symbol for name, not {}",
+				*tgt));
+}
+
+result<valuep> define_macro(std::shared_ptr<environment> env, cons *name_and_formals, valuep body) {
+	auto name = value_cast<symbol>(name_and_formals->car);
+	auto formals = name_and_formals->cdr;
+	if (!name)
+		return fail(error_kind::illegal_argument, std::format(
+					"define-macro expects a symbol for name, not {}",
+					*name_and_formals->car));
+
+	auto value = make_macro2(TRY(function_formals::parse(formals)), body, env);
+	env->values[name->val] = value;
+	return value;
+}
+
+} // namespace builtins
+
 std::shared_ptr<environment> prepare_root_environment() {
 	auto root_env = std::make_shared<environment>();
 
-	auto functionlike = [&] (std::string name, std::string formals, builtin::fn_type tgt) {
-		std::istringstream ss{formals};
-		auto tokens = tokenize(ss);
-		auto it = tokens.begin();
-		auto formals_expr = MUST(parse_expr(it));
-
-		root_env->values[name] = make_functionlike_builtin(name,
-				MUST(function_formals::parse(formals_expr)), tgt);
+	auto function2 = [&] (std::string name, auto tgt) {
+		root_env->values[name] = make_functionlike_builtin2(name, tgt);
 	};
 
-	auto macrolike = [&] (std::string name, std::string formals, builtin::fn_type tgt) {
-		std::istringstream ss{formals};
-		auto tokens = tokenize(ss);
-		auto it = tokens.begin();
-		auto formals_expr = MUST(parse_expr(it));
-
-		root_env->values[name] = make_macrolike_builtin(name,
-				MUST(function_formals::parse(formals_expr)), tgt);
+	auto macro2 = [&] (std::string name, auto tgt) {
+		root_env->values[name] = make_macrolike_builtin2(name, tgt);
 	};
 
-	functionlike(
-		"cons", "(_ _)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			return make_cons(params[0], params[1]);
-		});
+	using namespace builtins;
 
-	functionlike(
-		"car", "(_)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			auto kons = value_cast<cons>(params[0]);
-			if (!kons)
-				return fail(error_kind::illegal_argument,
-						std::format("car expects a cons, not {}", *params[0]));
+	function2("cons", cons_);
+	function2("car", car);
+	function2("cdr", cdr);
+	function2("nil?", nil_p);
+	function2("eq?", equal_p);
 
-			return kons->car;
-		});
+	function2("+", arith_fold<std::plus<int>, 0>);
+	function2("*", arith_fold<std::multiplies<int>, 1>);
 
-	functionlike(
-		"cdr", "(_)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			auto kons = value_cast<cons>(params[0]);
-			if (!kons)
-				return fail(error_kind::illegal_argument,
-						std::format("cdr expects a cons, not {}", *params[0]));
+	function2("eval", eval_);
 
-			return kons->cdr;
-		});
+	macro2("quote", quote);
+	macro2("quasiquote", quasiquote);
 
-	functionlike(
-		"nil?", "(_)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			return make_number(!!value_cast<nil>(params[0]));
-		});
+	macro2("if", if_);
+	macro2("lambda", lambda);
+	macro2("λ", lambda);
 
-	functionlike(
-		"eq?", "(_ _)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			if (auto left_num = value_cast<number>(params[0]),
-					right_num = value_cast<number>(params[1]);
-					left_num && right_num && left_num->val == right_num->val) {
-				return make_number(1);
-			} else if (auto left_sym = value_cast<symbol>(params[0]),
-					right_sym = value_cast<symbol>(params[1]);
-					left_sym && right_sym && left_sym->val == right_sym->val) {
-				return make_number(1);
-			} else {
-				return make_number(0);
-			}
-		});
-
-	functionlike(
-		"+", "_",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			int result = 0;
-
-			for (auto param : params) {
-				auto num = value_cast<number>(param);
-				if (!num)
-					return fail(error_kind::illegal_argument,
-							std::format("+ expects a number, not {}", *param));
-
-				result += num->val;
-			}
-
-			return make_number(result);
-		});
-
-	functionlike(
-		"*", "_",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			int result = 1;
-
-			for (auto param : params) {
-				auto num = value_cast<number>(param);
-				if (!num)
-					return fail(error_kind::illegal_argument,
-							std::format("* expects a number, not {}", *param));
-
-				result *= num->val;
-			}
-
-			return make_number(result);
-		});
-
-	functionlike(
-		"eval", "(_)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			return eval(params[0], env); // TODO: env argument?
-		});
-
-	macrolike(
-		"quote", "(_)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment>) -> result<valuep> {
-			return params[0];
-		});
-
-	macrolike(
-		"quasiquote", "(_)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			return quasi_unquote(params[0], env);
-		});
-
-	macrolike(
-		"if", "(_ _ _)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			auto condition = TRY(eval(params[0], env));
-
-			if (auto val = value_cast<number>(condition); !val || val->val) {
-				return eval(params[1], env);
-			} else {
-				return eval(params[2], env);
-			}
-		});
-
-	macrolike(
-		"lambda", "(_ _)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			return make_lambda2(TRY(function_formals::parse(params[0])), params[1], env);
-		});
-	root_env->values["λ"] = root_env->values["lambda"];
-
-	macrolike(
-		"define", "(_ _)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (auto name = value_cast<symbol>(params[0])) {
-				// (define name value)
-
-				auto value = TRY(eval(params[1], env));
-				env->values[name->val] = value;
-				return value;
-			} else if (auto name_and_formals = value_cast<cons>(params[0])) {
-				// (define (name formals...) body)
-
-				auto name = value_cast<symbol>(name_and_formals->car);
-				auto formals = name_and_formals->cdr;
-				if (!name)
-					return fail(error_kind::illegal_argument,
-							std::format("define expects a symbol for name, not {}", *name_and_formals->car));
-
-				auto value = make_lambda2(TRY(function_formals::parse(formals)), params[1], env);
-				env->values[name->val] = value;
-				return value;
-			}
-			return fail(error_kind::illegal_argument,
-					std::format("define expects either a cons for name and formals, or a symbol for name, not {}", *params[0]));
-		});
-
-	macrolike(
-		"define-macro", "(_ _)",
-		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			if (auto name_and_formals = value_cast<cons>(params[0])) {
-				// (define-macro (name formals...) body)
-
-				auto name = value_cast<symbol>(name_and_formals->car);
-				auto formals = name_and_formals->cdr;
-				if (!name)
-					return fail(error_kind::illegal_argument,
-							std::format("define-macro expects a symbol for name, not {}", *name_and_formals->car));
-
-				auto value = make_macro2(TRY(function_formals::parse(formals)), params[1], env);
-				env->values[name->val] = value;
-				return value;
-			}
-			return fail(error_kind::illegal_argument,
-					std::format("define-macro expects a cons for name and formals, not {}", *params[0]));
-		});
+	macro2("define", define);
+	macro2("define-macro", define_macro);
 
 	return root_env;
 }

@@ -341,7 +341,7 @@ static_assert(value_subtype<callable>);
 struct lambda2 final : callable {
 	lambda2(function_formals formals, valuep body, bool macrolike,
 			std::shared_ptr<environment> captured_environment)
-	: callable{std::move(formals), "unnamed", macrolike}, body{std::move(body)},
+	: callable{std::move(formals), "", macrolike}, body{std::move(body)},
 		captured_environment{std::move(captured_environment)} { }
 
 	virtual result<valuep> do_apply(std::vector<valuep> params, std::shared_ptr<environment>) const override;
@@ -356,6 +356,145 @@ inline valuep make_lambda2(function_formals formals, valuep body, std::shared_pt
 
 inline valuep make_macro2(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
 	return std::make_shared<lambda2>(std::move(formals), std::move(body), true, std::move(captured_environment));
+}
+
+
+template <typename T>
+struct builtin_formals_item {
+	function_formals::item operator()() const {
+		return {"_", false};
+	}
+};
+
+// TODO: Support vector<T> arguments where T is a value subtype
+// TODO: vector<valuep> should be last, since it's the cdr of an improper formals list
+template <>
+struct builtin_formals_item<std::vector<valuep>> {
+	function_formals::item operator()() const {
+		return {"_", true};
+	}
+};
+
+template <bool WantEnv, typename ...Ts>
+struct builtin_cb_type {
+	using type = result<valuep> (*)(std::shared_ptr<environment> env, Ts...);
+};
+
+template <typename ...Ts>
+struct builtin_cb_type<false, Ts...> {
+	using type = result<valuep> (*)(Ts...);
+};
+
+template <bool WantEnv, typename ...Ts>
+struct builtin2 final : callable {
+	using fn_type = typename builtin_cb_type<WantEnv, Ts...>::type;
+
+	builtin2(std::string name, bool macrolike, fn_type fn)
+	: callable{function_formals{{builtin_formals_item<Ts>{}()...}},
+		std::move(name), macrolike}, fn{fn} { }
+
+	template <std::size_t I>
+	result<std::tuple_element_t<I, std::tuple<Ts...>>> process_param(const std::vector<valuep> &params) const {
+		using tgt_type = std::tuple_element_t<I, std::tuple<Ts...>>;
+
+		if (I >= params.size()) {
+			// TODO: If formals are an improper list, "need" value is invalid (we
+			// actually need at least sizeof...(Ts) - 1 parameters)
+			return fail(error_kind::unrecognized_form, std::format(
+						"not enough parameters for {} (given {}, need {})",
+						callable::name, params.size(), sizeof...(Ts)));
+		}
+
+		if constexpr (std::is_same_v<tgt_type, valuep>) {
+			return params[I];
+		} else if constexpr (std::is_pointer_v<tgt_type>
+				&& value_subtype<std::remove_pointer_t<tgt_type>>) {
+			auto tgt = value_cast<std::remove_pointer_t<tgt_type>>(params[I]);
+			if (!tgt) {
+				return fail(error_kind::illegal_argument, std::format(
+							"{} did not expect {} as it's {}{} parameter",
+							callable::name, *params[I], I + 1,
+							((I + 1) % 10) == 1 ? "st" :
+							((I + 1) % 10) == 2 ? "nd" : "th"));
+			}
+
+			return tgt;
+		} else {
+			// TODO: Assuming this is std::vector<valuep>
+			tgt_type out;
+			valuep cur = params[I];
+
+			while (cur->type() == value_type::cons) {
+				auto cur_cons = value_cast<cons>(cur);
+				assert(cur_cons);
+
+				out.push_back(cur_cons->car);
+
+				cur = cur_cons->cdr;
+			}
+
+			if (cur->type() != value_type::nil) {
+				return fail(error_kind::unrecognized_form, std::format(
+							"in {} invocation: parameters are not a proper list: {}",
+							callable::name, *cur));
+			}
+
+			return out;
+		}
+	}
+
+	result<std::tuple<>> build_fn_args_tup(const std::vector<valuep> &, std::index_sequence<>) const {
+		return std::make_tuple();
+	}
+
+	template <std::size_t I, std::size_t ...Is>
+	result<std::tuple<
+		std::tuple_element_t<I, std::tuple<Ts...>>,
+		std::tuple_element_t<Is, std::tuple<Ts...>>...>>
+	build_fn_args_tup(const std::vector<valuep> &params, std::index_sequence<I, Is...>) const {
+		return std::tuple_cat(
+			std::make_tuple(TRY(process_param<I>(params))),
+			TRY(build_fn_args_tup(params, std::index_sequence<Is...>{})));
+	}
+
+	virtual result<valuep> do_apply(std::vector<valuep> params, std::shared_ptr<environment> env) const override {
+		auto params_tup = TRY(build_fn_args_tup(params, std::index_sequence_for<Ts...>{}));
+
+		if constexpr (WantEnv) {
+			return std::apply(fn, std::tuple_cat(std::make_tuple(env), params_tup));
+		} else {
+			return std::apply(fn, params_tup);
+		}
+	}
+
+	fn_type fn;
+};
+
+
+template <typename ...Ts>
+struct arg_types_to_builtin2_type {
+	using type = builtin2<false, Ts...>;
+};
+
+template <typename ...Ts>
+struct arg_types_to_builtin2_type<std::shared_ptr<environment>, Ts...> {
+	using type = builtin2<true, Ts...>;
+};
+
+template <typename ...Ts>
+inline valuep make_functionlike_builtin2(std::string name, result<valuep> (*tgt)(Ts...)) {
+	using builtin_ty = typename arg_types_to_builtin2_type<Ts...>::type;
+	static_assert(std::same_as<decltype(tgt), typename builtin_ty::fn_type>);
+
+	return std::make_shared<builtin_ty>(std::move(name), false, tgt);
+}
+
+template <typename ...Ts>
+inline valuep make_macrolike_builtin2(std::string name, result<valuep> (*tgt)(Ts...)) {
+	using builtin_ty = typename arg_types_to_builtin2_type<Ts...>::type;
+	static_assert(std::same_as<decltype(tgt), typename builtin_ty::fn_type>);
+
+	return std::make_shared<builtin_ty>(std::move(name), true, tgt);
 }
 
 
