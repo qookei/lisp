@@ -18,6 +18,7 @@
 
 
 #include "value.hpp"
+#include "eval.hpp"
 
 #include <cassert>
 #include <format>
@@ -83,4 +84,40 @@ std::ostream &operator<<(std::ostream &os, const function_formals &self) {
 	}
 
 	return os << ")";
+}
+
+
+result<valuep> callable::apply(valuep params, std::shared_ptr<environment> env) const {
+	std::vector<valuep> out;
+
+	TRY(formals.map_params(
+			params,
+			[&] (valuep expr) -> result<valuep> {
+				return macrolike
+					? expr
+					: TRY(eval(expr, env));
+			},
+			[&] (std::string, bool, valuep value) -> result<void> {
+				out.push_back(value);
+
+				return {};
+			}));
+
+	return do_apply(std::move(out), env);
+}
+
+
+result<valuep> lambda2::do_apply(std::vector<valuep> params, std::shared_ptr<environment> env) const {
+	auto sub_env = std::make_shared<environment>();
+	sub_env->parent = captured_environment;
+
+	for (const auto &[item, value] : std::views::zip(formals.items, params))
+		sub_env->values[item.name] = value;
+
+	if (macrolike) {
+		auto out_expr = TRY(eval(body, sub_env));
+		return eval(out_expr, env);
+	}
+
+	return eval(body, sub_env);
 }

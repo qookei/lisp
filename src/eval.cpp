@@ -26,18 +26,6 @@
 #include <format>
 
 
-template <typename F>
-result<valuep> map(valuep list, F &&func) {
-	if (value_cast<nil>(list)) {
-		return make_nil();
-	} else if (auto kons = value_cast<cons>(list)) {
-		return make_cons(
-			TRY(func(kons->car)), TRY(map(kons->cdr, std::forward<F>(func))));
-	} else {
-		return fail(error_kind::illegal_argument, std::format("in map: {} is not cons or nil", *list));
-	}
-}
-
 result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 	if (value_cast<number>(expr)) {
 		return expr;
@@ -56,27 +44,23 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 
 			TRY(bltn->formals.map_params(
 					kons->cdr,
-					[&] (std::string, bool rest, valuep expr) -> result<void> {
+					[&] (valuep expr) -> result<valuep> {
+						return !bltn->evaluate_params
+							? expr
+							: TRY(eval(expr, env));
+					},
+					[&] (std::string, bool rest, valuep value) -> result<void> {
 						if (rest) {
-							auto values =
-								!bltn->evaluate_params
-								? expr
-								: TRY(map(expr, [&] (valuep expr) {
-									return eval(expr, env);
-								}));
-
-							while (values->type() == value_type::cons) {
-								auto cur_cons = value_cast<cons>(values);
+							while (value->type() == value_type::cons) {
+								auto cur_cons = value_cast<cons>(value);
 								assert(cur_cons);
 
 								params.push_back(cur_cons->car);
 
-								values = cur_cons->cdr;
+								value = cur_cons->cdr;
 							}
 						} else {
-							params.push_back(
-								!bltn->evaluate_params
-								? expr : TRY(eval(expr, env)));
+							params.push_back(value);
 						}
 
 						return {};
@@ -89,13 +73,13 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 
 			TRY(lmbd->formals.map_params(
 					kons->cdr,
-					[&] (std::string name, bool rest, valuep expr) -> result<void> {
-						sub_env->values[name] =
-							lmbd->is_macro
-							? expr : rest
-							? TRY(map(expr, [&] (valuep expr) {
-								return eval(expr, env);
-							})) : TRY(eval(expr, env));
+					[&] (valuep expr) -> result<valuep> {
+						return lmbd->is_macro
+							? expr
+							: TRY(eval(expr, env));
+					},
+					[&] (std::string name, bool, valuep value) -> result<void> {
+						sub_env->values[name] = value;
 						return {};
 					}));
 
@@ -105,8 +89,11 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 			}
 
 			return eval(lmbd->body, sub_env);
+		} else if (auto clb = value_cast<callable>(fn)) {
+			return clb->apply(kons->cdr, env);
 		} else {
-			return fn;
+			return fail(error_kind::unrecognized_form, std::format(
+						"{} is not invocable", *fn));
 		}
 	}
 }
@@ -372,7 +359,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 	macrolike(
 		"lambda", "(_ _)",
 		[] (std::vector<valuep> params, std::shared_ptr<environment> env) -> result<valuep> {
-			return make_lambda(TRY(function_formals::parse(params[0])), params[1], env);
+			return make_lambda2(TRY(function_formals::parse(params[0])), params[1], env);
 		});
 	root_env->values["λ"] = root_env->values["lambda"];
 
@@ -394,7 +381,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 					return fail(error_kind::illegal_argument,
 							std::format("define expects a symbol for name, not {}", *name_and_formals->car));
 
-				auto value = make_lambda(TRY(function_formals::parse(formals)), params[1], env);
+				auto value = make_lambda2(TRY(function_formals::parse(formals)), params[1], env);
 				env->values[name->val] = value;
 				return value;
 			}
@@ -414,7 +401,7 @@ std::shared_ptr<environment> prepare_root_environment() {
 					return fail(error_kind::illegal_argument,
 							std::format("define-macro expects a symbol for name, not {}", *name_and_formals->car));
 
-				auto value = make_macro(TRY(function_formals::parse(formals)), params[1], env);
+				auto value = make_macro2(TRY(function_formals::parse(formals)), params[1], env);
 				env->values[name->val] = value;
 				return value;
 			}

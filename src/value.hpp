@@ -41,7 +41,8 @@ enum class value_type {
 	cons,
 	nil,
 	lambda,
-	builtin
+	builtin,
+	callable
 };
 
 
@@ -109,6 +110,10 @@ template <typename T>
 T *value_cast(const valuep &v) {
 	return value_cast<T>(v.get());
 }
+
+
+template <typename F>
+result<valuep> map(valuep list, F &&fn);
 
 
 // TODO: I think this implementation of environment lets you leak memory due to the
@@ -235,8 +240,8 @@ struct function_formals {
 
 	static result<function_formals> parse(valuep formals);
 
-	template <typename F>
-	result<void> map_params(valuep params, F &&fn) const {
+	template <typename FE, typename FP>
+	result<void> map_params(valuep params, FE &&eval, FP &&process) const {
 		auto item_it = items.begin();
 		auto cur = params;
 
@@ -246,14 +251,14 @@ struct function_formals {
 				++item_it;
 				assert(item_it == items.end());
 
-				TRY(fn(item.name, true, cur));
+				TRY(process(item.name, true, TRY(map(cur, std::forward<FE>(eval)))));
 				return {};
 			}
 
 			auto cur_cons = value_cast<cons>(cur);
 			assert(cur_cons);
 
-			TRY(fn(item.name, false, cur_cons->car));
+			TRY(process(item.name, false, TRY(eval(cur_cons->car))));
 
 			cur = cur_cons->cdr;
 			item_it++;
@@ -268,7 +273,7 @@ struct function_formals {
 					std::format("too many parameters, left over {}", *cur));
 		} else if (item_it != items.end()) {
 			return fail(error_kind::unrecognized_form,
-					std::format("not enough parameters, first missing paramer is {}",
+					std::format("not enough parameters, first missing parameter is {}",
 							item_it->name));
 		}
 
@@ -339,4 +344,61 @@ inline valuep make_functionlike_builtin(std::string name, function_formals forma
 
 inline valuep make_macrolike_builtin(std::string name, function_formals formals, builtin::fn_type tgt) {
 	return std::make_shared<builtin>(std::move(formals), std::move(name), false, tgt);
+}
+
+
+struct callable : value {
+	static inline constexpr value_type this_type = value_type::callable;
+
+	callable(function_formals formals, std::string name, bool macrolike)
+	: value{this_type}, formals{std::move(formals)}, name{std::move(name)}, macrolike{macrolike} { }
+
+	virtual std::ostream &format(std::ostream &os) const override {
+		return os << (macrolike ? "[macro" : name.size() ? "[procedure" : "[lambda")
+			  << (name.size() ? " " : "") << name << " " << formals << "]";
+	}
+
+	result<valuep> apply(valuep params, std::shared_ptr<environment> env) const;
+
+	function_formals formals;
+	std::string name;
+	bool macrolike;
+
+protected:
+	virtual result<valuep> do_apply(std::vector<valuep> params, std::shared_ptr<environment> env) const = 0;
+};
+static_assert(value_subtype<callable>);
+
+
+struct lambda2 final : callable {
+	lambda2(function_formals formals, valuep body, bool macrolike,
+			std::shared_ptr<environment> captured_environment)
+	: callable{std::move(formals), "unnamed", macrolike}, body{std::move(body)},
+		captured_environment{std::move(captured_environment)} { }
+
+	virtual result<valuep> do_apply(std::vector<valuep> params, std::shared_ptr<environment>) const override;
+
+	valuep body;
+	std::shared_ptr<environment> captured_environment;
+};
+
+inline valuep make_lambda2(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
+	return std::make_shared<lambda2>(std::move(formals), std::move(body), false, std::move(captured_environment));
+}
+
+inline valuep make_macro2(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
+	return std::make_shared<lambda2>(std::move(formals), std::move(body), true, std::move(captured_environment));
+}
+
+
+template <typename F>
+result<valuep> map(valuep list, F &&fn) {
+	if (value_cast<nil>(list)) {
+		return make_nil();
+	} else if (auto kons = value_cast<cons>(list)) {
+		return make_cons(
+			TRY(fn(kons->car)), TRY(map(kons->cdr, std::forward<F>(fn))));
+	} else {
+		return fail(error_kind::illegal_argument, std::format("in map: {} is not cons or nil", *list));
+	}
 }
