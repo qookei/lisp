@@ -40,7 +40,6 @@ enum class value_type {
 	number,
 	cons,
 	nil,
-	builtin,
 	callable
 };
 
@@ -281,38 +280,6 @@ struct function_formals {
 
 	friend std::ostream &operator<<(std::ostream &os, const function_formals &self);
 };
-
-
-struct builtin : value {
-	static inline constexpr value_type this_type = value_type::builtin;
-	using fn_type = result<valuep> (*)(std::vector<valuep> params, std::shared_ptr<environment> env);
-
-	builtin(function_formals formals, std::string name, bool evaluate_params, fn_type tgt)
-	: value{this_type}, formals{std::move(formals)}, name{std::move(name)},
-		evaluate_params{evaluate_params}, tgt{tgt} { }
-
-	virtual std::ostream &format(std::ostream &os) const override {
-		return os << (evaluate_params ? "[built-in macro " : "[built-in procedure ")
-				<< name << " " << formals << "]";
-	}
-
-	function_formals formals;
-
-	std::string name;
-
-
-	bool evaluate_params;
-	fn_type tgt;
-};
-static_assert(value_subtype<builtin>);
-
-inline valuep make_functionlike_builtin(std::string name, function_formals formals, builtin::fn_type tgt) {
-	return std::make_shared<builtin>(std::move(formals), std::move(name), true, tgt);
-}
-
-inline valuep make_macrolike_builtin(std::string name, function_formals formals, builtin::fn_type tgt) {
-	return std::make_shared<builtin>(std::move(formals), std::move(name), false, tgt);
-}
 
 
 struct callable : value {

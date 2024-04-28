@@ -37,36 +37,8 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 
 		auto fn = TRY(eval(kons->car, env));
 
-		if (auto bltn = value_cast<builtin>(fn)) {
-			std::vector<valuep> params;
-
-			TRY(bltn->formals.map_params(
-					kons->cdr,
-					[&] (valuep expr) -> result<valuep> {
-						return !bltn->evaluate_params
-							? expr
-							: TRY(eval(expr, env));
-					},
-					[&] (std::string, bool rest, valuep value) -> result<void> {
-						if (rest) {
-							while (value->type() == value_type::cons) {
-								auto cur_cons = value_cast<cons>(value);
-								assert(cur_cons);
-
-								params.push_back(cur_cons->car);
-
-								value = cur_cons->cdr;
-							}
-						} else {
-							params.push_back(value);
-						}
-
-						return {};
-					}));
-
-			return bltn->tgt(params, env);
-		} else if (auto clb = value_cast<callable>(fn)) {
-			return clb->apply(kons->cdr, env);
+		if (auto cb = value_cast<callable>(fn)) {
+			return cb->apply(kons->cdr, env);
 		} else {
 			return fail(error_kind::unrecognized_form, std::format(
 						"{} is not invocable", *fn));
