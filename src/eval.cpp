@@ -181,8 +181,9 @@ result<valuep> cdr(cons *kons) {
 	return kons->cdr;
 }
 
-result<valuep> nil_p(valuep expr) {
-	return make_number(expr->type() == value_type::nil);
+template <value_subtype T>
+result<valuep> is_type_p(valuep expr) {
+	return make_number(expr->type() == T::this_type);
 }
 
 bool equal_p_impl(valuep left, valuep right) {
@@ -334,7 +335,12 @@ std::shared_ptr<environment> prepare_root_environment() {
 	function("cons", cons_);
 	function("car", car);
 	function("cdr", cdr);
-	function("nil?", nil_p);
+
+	function("symbol?", is_type_p<symbol>);
+	function("number?", is_type_p<number>);
+	function("cons?", is_type_p<cons>);
+	function("nil?", is_type_p<nil>);
+	function("callable?", is_type_p<callable>);
 	function("eq?", equal_p);
 
 	function("+", arith_fold<std::plus<int>, 0>);
