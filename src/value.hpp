@@ -40,7 +40,6 @@ enum class value_type {
 	number,
 	cons,
 	nil,
-	lambda,
 	builtin,
 	callable
 };
@@ -282,37 +281,6 @@ struct function_formals {
 
 	friend std::ostream &operator<<(std::ostream &os, const function_formals &self);
 };
-
-struct lambda : value {
-	static inline constexpr value_type this_type = value_type::lambda;
-
-	lambda(function_formals formals, valuep body, bool macro,
-			std::shared_ptr<environment> captured_environment)
-	: value{this_type}, formals{std::move(formals)}, body{std::move(body)}, is_macro{macro},
-		captured_environment{std::move(captured_environment)} { }
-
-	virtual std::ostream &format(std::ostream &os) const override {
-		return os << (is_macro ? "[macro " : "[lambda ")
-				<< static_cast<const void *>(this) << " " << formals
-				<< " (env " << captured_environment.get() << ")]";
-	}
-
-	function_formals formals;
-	valuep body;
-
-	bool is_macro;
-
-	std::shared_ptr<environment> captured_environment;
-};
-static_assert(value_subtype<lambda>);
-
-inline valuep make_lambda(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
-	return std::make_shared<lambda>(std::move(formals), std::move(body), false, std::move(captured_environment));
-}
-
-inline valuep make_macro(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
-	return std::make_shared<lambda>(std::move(formals), std::move(body), true, std::move(captured_environment));
-}
 
 
 struct builtin : value {

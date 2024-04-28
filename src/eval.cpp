@@ -67,28 +67,6 @@ result<valuep> eval(valuep expr, std::shared_ptr<environment> env) {
 					}));
 
 			return bltn->tgt(params, env);
-		} else if (auto lmbd = value_cast<lambda>(fn)) {
-			auto sub_env = std::make_shared<environment>();
-			sub_env->parent = lmbd->captured_environment;
-
-			TRY(lmbd->formals.map_params(
-					kons->cdr,
-					[&] (valuep expr) -> result<valuep> {
-						return lmbd->is_macro
-							? expr
-							: TRY(eval(expr, env));
-					},
-					[&] (std::string name, bool, valuep value) -> result<void> {
-						sub_env->values[name] = value;
-						return {};
-					}));
-
-			if (lmbd->is_macro) {
-				auto out_expr = TRY(eval(lmbd->body, sub_env));
-				return eval(out_expr, env);
-			}
-
-			return eval(lmbd->body, sub_env);
 		} else if (auto clb = value_cast<callable>(fn)) {
 			return clb->apply(kons->cdr, env);
 		} else {
