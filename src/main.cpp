@@ -26,11 +26,65 @@
 #include <fstream>
 #include <memory>
 
+#include <readline/readline.h>
+#include <readline/history.h>
+
+
+void repl() {
+	using_history();
+
+	auto root_env = prepare_root_environment();
+	auto env = std::make_shared<environment>();
+	env->parent = root_env;
+
+	uint64_t out_ctr = 1;
+
+	while (true) {
+		char *input = readline(">>> ");
+		if (!input)
+			break;
+
+		add_history(input);
+
+		std::istringstream ss{input};
+
+		auto tokens = tokenize(ss);
+		auto it = tokens.begin();
+
+		while (true) {
+			auto maybe_expr = parse_expr(it);
+			if (!maybe_expr && maybe_expr.error().kind == error_kind::end_of_file) {
+				break;
+			} else if (!maybe_expr) {
+				std::cout << "error during parsing of input: "
+					  << maybe_expr.error() << "\n";
+				break;
+			}
+
+			auto expr = MUST(maybe_expr);
+			auto maybe_result = eval(expr, env);
+
+			if (!maybe_result) {
+				std::cout << "error during evaluation of input: "
+					  << maybe_result.error() << "\n";
+				break;
+			}
+			auto result = MUST(maybe_result);
+
+			std::string out_name = std::format("${}", out_ctr++);
+			std::cout << out_name << " = " << *result << "\n";
+			env->values[out_name] = result;
+		}
+
+		free(input);
+	}
+}
+
 
 int main(int argc, char **argv) {
-	if(argc != 2) {
-		std::cerr << argv[0] << "requires an argument.\n";
-		return 1;
+	if (argc != 2) {
+		repl();
+		return 0;
 	}
 
 	std::ifstream file{argv[1]};

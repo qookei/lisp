@@ -4,12 +4,15 @@ project('lisp', 'cpp',
 	default_options : ['warning_level=2',
 			   'cpp_std=gnu++23'])
 
+readline = dependency('readline')
+
 exe = executable('lisp',
 		 'src/main.cpp',
 		 'src/token.cpp',
 		 'src/parse.cpp',
 		 'src/value.cpp',
 		 'src/eval.cpp',
-		 install : true)
+		 install : true,
+		 dependencies : readline)
 
 subdir('tests')
