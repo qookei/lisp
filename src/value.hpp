@@ -137,7 +137,7 @@ struct environment : std::enable_shared_from_this<environment> {
 };
 
 
-struct symbol : value {
+struct symbol final : value {
 	static inline constexpr value_type this_type = value_type::symbol;
 
 	symbol(std::string v)
@@ -156,7 +156,7 @@ inline valuep make_symbol(std::string sym) {
 }
 
 
-struct number : value {
+struct number final : value {
 	static inline constexpr value_type this_type = value_type::number;
 
 	number(int v)
@@ -175,7 +175,7 @@ inline valuep make_number(int num) {
 }
 
 
-struct cons : value {
+struct cons final : value {
 	static inline constexpr value_type this_type = value_type::cons;
 
 	cons(valuep car, valuep cdr)
@@ -212,7 +212,7 @@ inline valuep make_cons(valuep car, valuep cdr) {
 }
 
 
-struct nil : value {
+struct nil final : value {
 	static inline constexpr value_type this_type = value_type::nil;
 
 	nil() : value{this_type} { }

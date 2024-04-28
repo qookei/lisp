@@ -28,14 +28,6 @@
      ;; Parameter list for lambda
      (map cadr bindings)))
 
-;; TODO: eq? should support lists
-(define (list-equal? a b)
-    (cond
-      ((nil? a) (nil? b))
-      ((nil? b) 0)
-      ((eq? (car a) (car b))
-       (list-equal? (cdr a) (cdr b)))))
-
 (define (transform-cond-cases cases)
     (if (nil? cases)
 	0
@@ -69,7 +61,7 @@
 
 (define (a::b lst)
     (let ((out (a::b-step lst)))
-      (if (list-equal? lst out)
+      (if (eq? lst out)
 	  out
 	  (a::b out))))
 
