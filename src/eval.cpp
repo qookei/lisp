@@ -272,8 +272,8 @@ result<valuep> if_(std::shared_ptr<environment> env, valuep condition_expr, valu
 	}
 }
 
-result<valuep> lambda(std::shared_ptr<environment> env, valuep formals, valuep body) {
-	return make_lambda2(TRY(function_formals::parse(formals)), body, env);
+result<valuep> lambda_(std::shared_ptr<environment> env, valuep formals, valuep body) {
+	return make_lambda(TRY(function_formals::parse(formals)), body, env);
 }
 
 result<valuep> define(std::shared_ptr<environment> env, valuep tgt, valuep body) {
@@ -293,7 +293,7 @@ result<valuep> define(std::shared_ptr<environment> env, valuep tgt, valuep body)
 						"define expects a symbol for name, not {}",
 						*name_and_formals->car));
 
-		auto value = make_lambda2(TRY(function_formals::parse(formals)), body, env);
+		auto value = make_lambda(TRY(function_formals::parse(formals)), body, env);
 		env->values[name->val] = value;
 		return value;
 	}
@@ -311,7 +311,7 @@ result<valuep> define_macro(std::shared_ptr<environment> env, cons *name_and_for
 					"define-macro expects a symbol for name, not {}",
 					*name_and_formals->car));
 
-	auto value = make_macro2(TRY(function_formals::parse(formals)), body, env);
+	auto value = make_macro(TRY(function_formals::parse(formals)), body, env);
 	env->values[name->val] = value;
 	return value;
 }
@@ -321,36 +321,36 @@ result<valuep> define_macro(std::shared_ptr<environment> env, cons *name_and_for
 std::shared_ptr<environment> prepare_root_environment() {
 	auto root_env = std::make_shared<environment>();
 
-	auto function2 = [&] (std::string name, auto tgt) {
-		root_env->values[name] = make_functionlike_builtin2(name, tgt);
+	auto function = [&] (std::string name, auto tgt) {
+		root_env->values[name] = make_builtin_procedure(name, tgt);
 	};
 
-	auto macro2 = [&] (std::string name, auto tgt) {
-		root_env->values[name] = make_macrolike_builtin2(name, tgt);
+	auto macro = [&] (std::string name, auto tgt) {
+		root_env->values[name] = make_builtin_macro(name, tgt);
 	};
 
 	using namespace builtins;
 
-	function2("cons", cons_);
-	function2("car", car);
-	function2("cdr", cdr);
-	function2("nil?", nil_p);
-	function2("eq?", equal_p);
+	function("cons", cons_);
+	function("car", car);
+	function("cdr", cdr);
+	function("nil?", nil_p);
+	function("eq?", equal_p);
 
-	function2("+", arith_fold<std::plus<int>, 0>);
-	function2("*", arith_fold<std::multiplies<int>, 1>);
+	function("+", arith_fold<std::plus<int>, 0>);
+	function("*", arith_fold<std::multiplies<int>, 1>);
 
-	function2("eval", eval_);
+	function("eval", eval_);
 
-	macro2("quote", quote);
-	macro2("quasiquote", quasiquote);
+	macro("quote", quote);
+	macro("quasiquote", quasiquote);
 
-	macro2("if", if_);
-	macro2("lambda", lambda);
-	macro2("λ", lambda);
+	macro("if", if_);
+	macro("lambda", lambda_);
+	macro("λ", lambda_);
 
-	macro2("define", define);
-	macro2("define-macro", define_macro);
+	macro("define", define);
+	macro("define-macro", define_macro);
 
 	return root_env;
 }

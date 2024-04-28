@@ -107,7 +107,7 @@ result<valuep> callable::apply(valuep params, std::shared_ptr<environment> env) 
 }
 
 
-result<valuep> lambda2::do_apply(std::vector<valuep> params, std::shared_ptr<environment> env) const {
+result<valuep> lambda::do_apply(std::vector<valuep> params, std::shared_ptr<environment> env) const {
 	auto sub_env = std::make_shared<environment>();
 	sub_env->parent = captured_environment;
 

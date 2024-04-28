@@ -305,8 +305,8 @@ protected:
 static_assert(value_subtype<callable>);
 
 
-struct lambda2 final : callable {
-	lambda2(function_formals formals, valuep body, bool macrolike,
+struct lambda final : callable {
+	lambda(function_formals formals, valuep body, bool macrolike,
 			std::shared_ptr<environment> captured_environment)
 	: callable{std::move(formals), "", macrolike}, body{std::move(body)},
 		captured_environment{std::move(captured_environment)} { }
@@ -317,12 +317,12 @@ struct lambda2 final : callable {
 	std::shared_ptr<environment> captured_environment;
 };
 
-inline valuep make_lambda2(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
-	return std::make_shared<lambda2>(std::move(formals), std::move(body), false, std::move(captured_environment));
+inline valuep make_lambda(function_formals formals, valuep body, std::shared_ptr<environment> env) {
+	return std::make_shared<lambda>(std::move(formals), std::move(body), false, std::move(env));
 }
 
-inline valuep make_macro2(function_formals formals, valuep body, std::shared_ptr<environment> captured_environment) {
-	return std::make_shared<lambda2>(std::move(formals), std::move(body), true, std::move(captured_environment));
+inline valuep make_macro(function_formals formals, valuep body, std::shared_ptr<environment> env) {
+	return std::make_shared<lambda>(std::move(formals), std::move(body), true, std::move(env));
 }
 
 
@@ -342,6 +342,7 @@ struct builtin_formals_item<std::vector<valuep>> {
 	}
 };
 
+
 template <bool WantEnv, typename ...Ts>
 struct builtin_cb_type {
 	using type = result<valuep> (*)(std::shared_ptr<environment> env, Ts...);
@@ -352,11 +353,12 @@ struct builtin_cb_type<false, Ts...> {
 	using type = result<valuep> (*)(Ts...);
 };
 
+
 template <bool WantEnv, typename ...Ts>
-struct builtin2 final : callable {
+struct builtin final : callable {
 	using fn_type = typename builtin_cb_type<WantEnv, Ts...>::type;
 
-	builtin2(std::string name, bool macrolike, fn_type fn)
+	builtin(std::string name, bool macrolike, fn_type fn)
 	: callable{function_formals{{builtin_formals_item<Ts>{}()...}},
 		std::move(name), macrolike}, fn{fn} { }
 
@@ -439,26 +441,27 @@ struct builtin2 final : callable {
 
 
 template <typename ...Ts>
-struct arg_types_to_builtin2_type {
-	using type = builtin2<false, Ts...>;
+struct arg_types_to_builtin_type {
+	using type = builtin<false, Ts...>;
 };
 
 template <typename ...Ts>
-struct arg_types_to_builtin2_type<std::shared_ptr<environment>, Ts...> {
-	using type = builtin2<true, Ts...>;
+struct arg_types_to_builtin_type<std::shared_ptr<environment>, Ts...> {
+	using type = builtin<true, Ts...>;
 };
 
+
 template <typename ...Ts>
-inline valuep make_functionlike_builtin2(std::string name, result<valuep> (*tgt)(Ts...)) {
-	using builtin_ty = typename arg_types_to_builtin2_type<Ts...>::type;
+inline valuep make_builtin_procedure(std::string name, result<valuep> (*tgt)(Ts...)) {
+	using builtin_ty = typename arg_types_to_builtin_type<Ts...>::type;
 	static_assert(std::same_as<decltype(tgt), typename builtin_ty::fn_type>);
 
 	return std::make_shared<builtin_ty>(std::move(name), false, tgt);
 }
 
 template <typename ...Ts>
-inline valuep make_macrolike_builtin2(std::string name, result<valuep> (*tgt)(Ts...)) {
-	using builtin_ty = typename arg_types_to_builtin2_type<Ts...>::type;
+inline valuep make_builtin_macro(std::string name, result<valuep> (*tgt)(Ts...)) {
+	using builtin_ty = typename arg_types_to_builtin_type<Ts...>::type;
 	static_assert(std::same_as<decltype(tgt), typename builtin_ty::fn_type>);
 
 	return std::make_shared<builtin_ty>(std::move(name), true, tgt);
